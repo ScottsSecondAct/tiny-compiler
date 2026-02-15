@@ -1,0 +1,11 @@
+fn dot(a: int[3], b: int[3]) -> int {
+    var sum: int = 0;
+    for (i in 0..3) {
+        sum = sum + a[i] * b[i];
+    }
+    return sum;
+}
+
+let v1: int[3] = [1, 2, 3];
+let v2: int[3] = [4, 5, 6];
+print(dot(v1, v2));

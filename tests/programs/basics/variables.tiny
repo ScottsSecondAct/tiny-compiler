@@ -1,0 +1,4 @@
+let x: int = 42;
+var y: int = 10;
+y = y + x;
+print(y);

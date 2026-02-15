@@ -1,0 +1,24 @@
+// Recursive & iterative Fibonacci
+
+fn fib_rec(n: int) -> int {
+    if (n <= 1) {
+        return n;
+    }
+    return fib_rec(n - 1) + fib_rec(n - 2);
+}
+
+fn fib_iter(n: int) -> int {
+    var a: int = 0;
+    var b: int = 1;
+    for (i in 0..n) {
+        let temp: int = b;
+        b = a + b;
+        a = temp;
+    }
+    return a;
+}
+
+// Compare both approaches
+for (i in 0..15) {
+    print("fib(", i, ") = ", fib_rec(i), " (recursive) ", fib_iter(i), " (iterative)");
+}

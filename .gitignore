@@ -1,0 +1,66 @@
+# Build
+build/
+cmake-build-*/
+out/
+
+# ANTLR generated code
+generated/*.h
+generated/*.cpp
+generated/*.interp
+generated/*.tokens
+
+# Compiled objects
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# LLVM output
+*.ll
+*.bc
+*.s
+
+# Executables
+tinyc
+*.exe
+*.out
+
+# IDE
+.vscode/
+!.vscode/settings.json
+!.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*~
+*.kate-swp
+.project
+.cproject
+.settings/
+*.code-workspace
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+install_manifest.txt
+Makefile
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Core dumps
+core
+core.*
+vgcore.*
+
+# ccache
+.ccache/
+
+# clangd
+.cache/

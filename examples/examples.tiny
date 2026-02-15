@@ -1,0 +1,114 @@
+// ============================================================================
+// examples.tiny — Showcase of all Tiny language features
+// ============================================================================
+
+// ── 1. Variable declarations ────────────────────────────────────────────────
+
+let pi: float = 3.14159;          // immutable binding with explicit type
+var counter: int = 0;             // mutable binding
+let name = "Tiny Lang";           // type inference (string)
+var flag = true;                  // type inference (bool)
+
+// ── 2. Arithmetic & expressions ─────────────────────────────────────────────
+
+let radius: float = 5.0;
+let area = pi * radius * radius;
+let remainder = 17 % 5;           // modulo
+
+print("Area:", area);
+print("17 mod 5 =", remainder);
+
+// ── 3. Control flow — if / else ─────────────────────────────────────────────
+
+fn classify(n: int) -> string {
+    if (n > 0) {
+        return "positive";
+    } else if (n < 0) {
+        return "negative";
+    } else {
+        return "zero";
+    }
+}
+
+print(classify(42));
+print(classify(-1));
+print(classify(0));
+
+// ── 4. While loop ───────────────────────────────────────────────────────────
+
+fn factorial(n: int) -> int {
+    var result: int = 1;
+    var i: int = 1;
+    while (i <= n) {
+        result = result * i;
+        i = i + 1;
+    }
+    return result;
+}
+
+print("5! =", factorial(5));
+
+// ── 5. For loop (range-based) ───────────────────────────────────────────────
+
+fn sum_range(lo: int, hi: int) -> int {
+    var total: int = 0;
+    for (i in lo..hi) {
+        total = total + i;
+    }
+    return total;
+}
+
+print("Sum 1..100 =", sum_range(1, 101));
+
+// ── 6. Logical operators ────────────────────────────────────────────────────
+
+fn is_valid(age: int, has_id: bool) -> bool {
+    return age >= 18 && has_id;
+}
+
+fn either(a: bool, b: bool) -> bool {
+    return a || b;
+}
+
+print("valid?", is_valid(21, true));
+print("either?", either(false, true));
+
+// ── 7. Arrays ───────────────────────────────────────────────────────────────
+
+fn dot_product(a: int[3], b: int[3]) -> int {
+    var sum: int = 0;
+    for (i in 0..3) {
+        sum = sum + a[i] * b[i];
+    }
+    return sum;
+}
+
+let v1: int[3] = [1, 2, 3];
+let v2: int[3] = [4, 5, 6];
+print("dot =", dot_product(v1, v2));
+
+// ── 8. Nested functions & recursion ─────────────────────────────────────────
+
+fn fib(n: int) -> int {
+    if (n <= 1) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+print("fib(10) =", fib(10));
+
+// ── 9. String & print ───────────────────────────────────────────────────────
+
+fn greet(who: string) -> string {
+    return "Hello, " + who + "!";     // string concatenation (if you add it)
+}
+
+print(greet("Scott"));
+
+// ── 10. Negation & boolean logic ────────────────────────────────────────────
+
+let debug = false;
+if (!debug) {
+    print("Release mode");
+}
