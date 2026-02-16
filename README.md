@@ -1,6 +1,6 @@
 # Tiny Compiler
 
-A fully functional compiler for a custom programming language, built from scratch using **ANTLR4**, **C++17**, and **LLVM**. This project spans the entire compilation pipeline — lexical analysis, parsing, AST construction, semantic analysis, and native code generation — demonstrating systems programming skills and deep understanding of language implementation.
+A fully functional compiler for a custom programming language, built from scratch using **ANTLR4**, **C++17**, and **LLVM**. This project spans the entire compilation pipeline — lexical analysis, parsing, AST construction, semantic analysis, LLVM IR code generation, and native executable creation — demonstrating systems programming skills and deep understanding of language implementation.
 
 ## Why This Project
 
@@ -69,9 +69,9 @@ The compiler follows a classical multi-pass architecture, with each phase cleanl
 └──────┬──────┘
        │ output.ll
        ▼
-┌─────────────┐    LLVM's toolchain compiles IR to native machine
-│  llc + clang │    code, linked against a small C++ runtime that
-│  + runtime   │    implements print() and other built-ins.
+┌─────────────┐    Clang compiles IR to native machine code, linked
+│  clang       │    against a small C++ runtime that implements
+│  + runtime   │    print() and other built-ins.
 └─────────────┘
        │
        ▼
@@ -85,6 +85,9 @@ The grammar uses precedence climbing for expressions, explicit keyword tokens to
 
 ### AST Independence
 The AST is entirely decoupled from ANTLR's parse tree. ANTLR's concrete syntax tree mirrors the grammar 1:1 — every rule produces a node. The AST is a cleaner, semantic tree (`BinaryExpr`, `IfStmt`, `FunctionDecl`) that later passes can traverse without knowing anything about ANTLR. This required solving a non-trivial engineering problem: ANTLR visitors return `std::any`, which requires copy-constructible types, but AST nodes use `unique_ptr` for ownership. The solution uses a `shared_ptr<Holder>` wrapper that satisfies `std::any`'s copy requirement while preserving unique ownership semantics.
+
+### Semantic Analysis
+The semantic analyzer performs a two-pass approach over declarations — first registering all function signatures, then analyzing bodies — enabling mutual recursion. It enforces type safety across all operators, validates mutability (`let` vs `var`), checks function call arity and argument types, and infers types from initializers. Errors include source line numbers for clear diagnostics.
 
 ### Visitor Pattern Across Phases
 Every compiler phase implements the same `ASTVisitor` interface. The AST printer, semantic analyzer, and code generator are all visitors — adding a new pass (optimization, linting, formatting) means writing one new class. This design mirrors production compilers.
@@ -128,15 +131,16 @@ mkdir build && cd build
 cmake ..
 make -j$(nproc)
 
-# Dump the token stream
-./tinyc ../examples/hello.tiny --dump-tokens
+# Compile a Tiny program to LLVM IR
+./tinyc ../examples/hello.tiny -o output.ll
 
-# Dump the AST
-./tinyc ../examples/hello.tiny --dump-ast
+# Link with runtime and run as native executable
+clang output.ll ../runtime/runtime.cpp -o hello -no-pie
+./hello
 
-# Compile to LLVM IR (once codegen is complete)
-./tinyc ../examples/fibonacci.tiny -o output.ll
-lli output.ll
+# Debug flags
+./tinyc ../examples/hello.tiny --dump-tokens   # Print token stream
+./tinyc ../examples/hello.tiny --dump-ast      # Print AST
 ```
 
 ### Run Tests
@@ -163,7 +167,7 @@ This mirrors professional software development, where engineers routinely use to
 
 - **Systems programming**: C++17 with move semantics, smart pointers, CRTP, virtual dispatch, and template metaprogramming
 - **Compiler engineering**: Lexing, parsing, AST design, type systems, scope resolution, code generation
-- **LLVM**: IR generation via the C++ API — basic blocks, phi nodes, GEP, function definitions, external linkage
+- **LLVM**: IR generation via the C++ API — basic blocks, alloca/load/store, GEP, function definitions, external linkage
 - **Build systems**: CMake with custom targets, external tool integration, multi-library linking
 - **Software architecture**: Clean separation of concerns, visitor pattern, test-driven development
 - **Tool proficiency**: ANTLR4, LLVM, GDB, VS Code + WSL, Git
@@ -174,11 +178,15 @@ This mirrors professional software development, where engineers routinely use to
 - [x] Clean AST design with visitor pattern
 - [x] AST builder (parse tree → AST)
 - [x] AST pretty-printer for debugging
-- [ ] Scoped symbol table
-- [ ] Semantic analysis (type checking, mutability enforcement)
-- [ ] LLVM IR code generation
-- [ ] End-to-end compilation to native executables
+- [x] Scoped symbol table
+- [x] Semantic analysis (type checking, mutability enforcement)
+- [x] LLVM IR code generation
+- [x] Runtime library (print, newline)
+- [x] End-to-end compilation to native executables
 - [ ] Optimization passes via LLVM PassManager
+- [ ] End-to-end test suite execution
+- [ ] String operations (concatenation, length)
+- [ ] LLVM debug info for source-level debugging
 
 ## License
 

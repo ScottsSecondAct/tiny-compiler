@@ -32,22 +32,20 @@ tiny-compiler/
 │   ├── AST.h                               # ✅ AST node types, ASTVisitor, ASTBox
 │   ├── ASTBuilder.h                        # ✅ ANTLR parse tree → AST converter
 │   ├── ASTPrinter.h                        # ✅ Pretty-print AST for debugging
-│   ├── SemanticAnalyzer.h                  # 🔲 Type checking, symbol resolution
-│   ├── SymbolTable.h                       # 🔲 Scoped symbol table
-│   ├── TypeSystem.h                        # 🔲 Type representations & rules
-│   ├── CodeGen.h                           # 🔲 LLVM IR generation
-│   └── Diagnostics.h                       # 🔲 Error/warning reporting
+│   ├── SemanticAnalyzer.h                  # ✅ Type checking, symbol resolution
+│   ├── SymbolTable.h                       # ✅ Scoped symbol table
+│   ├── Diagnostics.h                       # ✅ Error/warning reporting
+│   └── CodeGen.h                           # ✅ LLVM IR generation
 │
 ├── src/                                    # Implementation files
-│   ├── main.cpp                            # ✅ CLI entry point & pipeline
+│   ├── main.cpp                            # ✅ CLI entry point & full pipeline
 │   ├── AST.cpp                             # ✅ binOpToString, etc.
 │   ├── ASTBuilder.cpp                      # ✅ Parse tree → AST visitor
 │   ├── ASTPrinter.cpp                      # ✅ AST → indented text dump
-│   ├── SemanticAnalyzer.cpp                # 🔲 Semantic passes
-│   ├── SymbolTable.cpp                     # 🔲 Scope push/pop, symbol lookup
-│   ├── TypeSystem.cpp                      # 🔲 Type comparison, promotion
-│   ├── CodeGen.cpp                         # 🔲 AST → LLVM IR
-│   └── Diagnostics.cpp                     # 🔲 Source locations, error formatting
+│   ├── SemanticAnalyzer.cpp                # ✅ Semantic passes
+│   ├── SymbolTable.cpp                     # ✅ Scope push/pop, symbol lookup
+│   ├── Diagnostics.cpp                     # ✅ Source locations, error formatting
+│   └── CodeGen.cpp                         # ✅ AST → LLVM IR
 │
 ├── runtime/                                # Linked runtime library for built-ins
 │   ├── CMakeLists.txt                      # Builds libtiny_runtime.a
@@ -99,7 +97,7 @@ tiny-compiler/
     └── llvm-patterns.md                    # Tiny construct → LLVM IR cheat sheet
 ```
 
-**Legend:** ✅ Implemented  🔲 Stub / TODO
+**Legend:** ✅ Implemented
 
 ## Architecture
 
@@ -118,7 +116,7 @@ tiny-compiler/
                            │ parse tree
                            ▼
               ┌────────────────────────┐
-              │   ASTBuilder           │   Phase 2
+              │   ASTBuilder           │   Phase 2 ✅
               │   (TinyBaseVisitor)    │   ANTLR parse tree → clean AST
               └────────────┬───────────┘
                            │
@@ -131,23 +129,23 @@ tiny-compiler/
                            │
                            ▼
               ┌────────────────────────┐
-              │   SemanticAnalyzer     │   Phase 3 (TODO)
+              │   SemanticAnalyzer     │   Phase 3 ✅
               │   SymbolTable          │   Type checking, scope resolution,
-              │   TypeSystem           │   mutability enforcement
+              │   Diagnostics          │   mutability enforcement
               └────────────┬───────────┘
                            │
                            │ validated AST
                            ▼
               ┌────────────────────────┐
-              │   CodeGen              │   Phase 4 (TODO)
+              │   CodeGen              │   Phase 4 ✅
               │   (ASTVisitor)         │   AST → LLVM IR → .ll file
               └────────────┬───────────┘
                            │
                            │ output.ll
                            ▼
               ┌────────────────────────┐
-              │   llc + clang          │   Phase 5
-              │   + libtiny_runtime.a  │   .ll → native executable
+              │   clang                │   Phase 5 ✅
+              │   + runtime/runtime.cpp│   .ll → native executable
               └────────────────────────┘
 ```
 
@@ -166,18 +164,18 @@ types. `unique_ptr` is move-only. `ASTBox` solves this by wrapping the
 box while the underlying node stays uniquely owned. The `boxNode()` and
 `unboxNode()` helpers keep this transparent.
 
-### Visitor pattern for all phases
+### Visitor pattern across all phases
 Every compiler phase implements `ASTVisitor`:
 - `ASTPrinter` — debugging
-- `SemanticAnalyzer` — validation (planned)
-- `CodeGen` — LLVM IR emission (planned)
+- `SemanticAnalyzer` — validation
+- `CodeGen` — LLVM IR emission
 
-Adding a new pass = writing a new `ASTVisitor` subclass.
+Adding a new pass (optimization, linting, formatting) = writing one new class.
 
 ### Runtime library
 Built-in operations (`print`, string ops, bounds checks) are implemented in
-C++ in `runtime/` and compiled to a static library. The codegen declares them
-as `extern` and calls them — simpler than emitting inline LLVM IR for each.
+C++ in `runtime/` and linked at compile time. The codegen declares them as
+`extern` and calls them — simpler than emitting inline LLVM IR for each.
 
 ### End-to-end test pairs
 Each test is a `.tiny` source + `.expected` output file. The runner compiles,
@@ -186,14 +184,20 @@ executes, and diffs. No framework needed for the integration layer.
 ## Build & Run
 
 ```bash
-# Build
+# Build the compiler
 mkdir build && cd build
 cmake .. && make -j$(nproc)
 
-# Run
+# Compile a Tiny program
+./tinyc ../examples/hello.tiny -o output.ll
+
+# Link with runtime and run
+clang output.ll ../runtime/runtime.cpp -o hello -no-pie
+./hello
+
+# Debug flags
 ./tinyc ../examples/hello.tiny --dump-ast      # Print AST
 ./tinyc ../examples/hello.tiny --dump-tokens   # Print tokens
-./tinyc ../examples/hello.tiny -o output.ll    # Compile (once codegen is done)
 
 # Test
 python3 ../tests/programs/run_tests.py --compiler ./tinyc
