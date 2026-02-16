@@ -7,8 +7,9 @@
 #include "TinyParser.h"
 #include "tiny/ASTBuilder.h"
 #include "tiny/ASTPrinter.h"
-// #include "tiny/SemanticAnalyzer.h"
-// #include "tiny/CodeGen.h"
+#include "tiny/SemanticAnalyzer.h"
+#include "tiny/Diagnostics.h"
+#include "tiny/CodeGen.h"
 
 void printUsage(const char* argv0) {
     std::cerr << "Usage: " << argv0
@@ -80,14 +81,26 @@ int main(int argc, char* argv[]) {
     }
 
     // ── Phase 3: Semantic Analysis ──────────────────────────────────────
-    // tiny::SemanticAnalyzer analyzer;
-    // analyzer.analyze(*ast);
+    tiny::Diagnostics diags;
+    tiny::SemanticAnalyzer analyzer(diags);
+    analyzer.analyze(*ast);
+
+    if (diags.hasErrors()) {
+        diags.dump(std::cerr);
+        return 1;
+    }
+
+    if (diags.warningCount() > 0) {
+        diags.dump(std::cerr);
+    }
 
     // ── Phase 4: Code Generation ────────────────────────────────────────
-    // tiny::CodeGen codegen;
-    // codegen.generate(*ast, outputFile);
+    tiny::CodeGen codegen(diags);
+    if (!codegen.generate(*ast, outputFile)) {
+        diags.dump(std::cerr);
+        return 1;
+    }
 
-    std::cout << "Parsed and built AST successfully.\n";
-    std::cout << "Use --dump-ast to see the tree.\n";
+    std::cout << "Compiled successfully: " << outputFile << "\n";
     return 0;
 }
