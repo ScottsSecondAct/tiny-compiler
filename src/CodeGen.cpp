@@ -3,6 +3,7 @@
 #include <llvm/IR/Verifier.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/FileSystem.h>
+#include <llvm/Passes/PassBuilder.h>
 
 #include <any>
 #include <cassert>
@@ -192,7 +193,8 @@ TypeSpec CodeGen::inferExprType(ASTNode& node) {
 
 // ── Main entry point ────────────────────────────────────────────────────────
 
-bool CodeGen::generate(Program& program, const std::string& outputFile) {
+bool CodeGen::generate(Program& program, const std::string& outputFile,
+                        OptLevel optLevel) {
     program.accept(*this);
 
     // Verify the module
@@ -201,6 +203,11 @@ bool CodeGen::generate(Program& program, const std::string& outputFile) {
     if (llvm::verifyModule(*module_, &verifyStream)) {
         diags_.error(program, "LLVM verification failed: " + verifyError);
         return false;
+    }
+
+    // Run optimization passes if requested
+    if (optLevel != OptLevel::O0) {
+        runOptimizations(optLevel);
     }
 
     // Write .ll file
@@ -743,6 +750,37 @@ std::any CodeGen::visit(IndexExpr& node) {
     llvm::Type* elemLLVMTy = toLLVMType(*var->type.elementType);
     return static_cast<llvm::Value*>(
         builder_.CreateLoad(elemLLVMTy, elemPtr, "elem"));
+}
+
+// ── Optimization Passes ─────────────────────────────────────────────────────
+
+void CodeGen::runOptimizations(OptLevel level) {
+    // Create the analysis managers
+    llvm::LoopAnalysisManager LAM;
+    llvm::FunctionAnalysisManager FAM;
+    llvm::CGSCCAnalysisManager CGAM;
+    llvm::ModuleAnalysisManager MAM;
+
+    // Create the pass builder and register analyses
+    llvm::PassBuilder PB;
+    PB.registerModuleAnalyses(MAM);
+    PB.registerCGSCCAnalyses(CGAM);
+    PB.registerFunctionAnalyses(FAM);
+    PB.registerLoopAnalyses(LAM);
+    PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+    // Map our OptLevel to LLVM's
+    llvm::OptimizationLevel llvmLevel;
+    switch (level) {
+        case OptLevel::O1: llvmLevel = llvm::OptimizationLevel::O1; break;
+        case OptLevel::O2: llvmLevel = llvm::OptimizationLevel::O2; break;
+        case OptLevel::O3: llvmLevel = llvm::OptimizationLevel::O3; break;
+        default:           llvmLevel = llvm::OptimizationLevel::O0; break;
+    }
+
+    // Build and run the standard optimization pipeline
+    auto MPM = PB.buildPerModuleDefaultPipeline(llvmLevel);
+    MPM.run(*module_, MAM);
 }
 
 } // namespace tiny

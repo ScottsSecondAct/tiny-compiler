@@ -13,17 +13,27 @@
 
 namespace tiny {
 
+/// Optimization level (mirrors clang -O flags)
+enum class OptLevel {
+    O0 = 0,  // No optimization
+    O1 = 1,  // Basic optimizations
+    O2 = 2,  // Standard optimizations (default for release)
+    O3 = 3,  // Aggressive optimizations
+};
+
 /// Walks the validated AST and emits LLVM IR.
 ///
 /// Usage:
 ///   CodeGen codegen(diags);
 ///   codegen.generate(program, "output.ll");
+///   codegen.generate(program, "output.ll", OptLevel::O2);
 class CodeGen : public ASTVisitor {
 public:
     explicit CodeGen(Diagnostics& diags);
 
-    /// Main entry point: generate IR for the program and write to file
-    bool generate(Program& program, const std::string& outputFile);
+    /// Main entry point: generate IR, optionally optimize, and write to file
+    bool generate(Program& program, const std::string& outputFile,
+                  OptLevel optLevel = OptLevel::O0);
 
     // ── Expressions (return llvm::Value*) ───────────────────────────────
     std::any visit(IntLit& node) override;
@@ -96,6 +106,9 @@ private:
 
     /// Get the TypeSpec for an expression by re-evaluating (used for print dispatch)
     TypeSpec inferExprType(ASTNode& node);
+
+    /// Run LLVM optimization passes on the module
+    void runOptimizations(OptLevel level);
 };
 
 } // namespace tiny

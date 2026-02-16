@@ -13,7 +13,8 @@
 
 void printUsage(const char* argv0) {
     std::cerr << "Usage: " << argv0
-              << " <source.tiny> [-o output.ll] [--dump-ast] [--dump-tokens]\n";
+              << " <source.tiny> [-o output.ll] [-O0|-O1|-O2|-O3]"
+                 " [--dump-ast] [--dump-tokens]\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -26,6 +27,7 @@ int main(int argc, char* argv[]) {
     std::string outputFile = "output.ll";
     bool dumpAST = false;
     bool dumpTokens = false;
+    tiny::OptLevel optLevel = tiny::OptLevel::O0;
 
     for (int i = 2; i < argc; i++) {
         std::string arg = argv[i];
@@ -35,6 +37,14 @@ int main(int argc, char* argv[]) {
             dumpAST = true;
         } else if (arg == "--dump-tokens") {
             dumpTokens = true;
+        } else if (arg == "-O0") {
+            optLevel = tiny::OptLevel::O0;
+        } else if (arg == "-O1") {
+            optLevel = tiny::OptLevel::O1;
+        } else if (arg == "-O2") {
+            optLevel = tiny::OptLevel::O2;
+        } else if (arg == "-O3") {
+            optLevel = tiny::OptLevel::O3;
         } else {
             std::cerr << "Unknown option: " << arg << "\n";
             printUsage(argv[0]);
@@ -96,7 +106,7 @@ int main(int argc, char* argv[]) {
 
     // ── Phase 4: Code Generation ────────────────────────────────────────
     tiny::CodeGen codegen(diags);
-    if (!codegen.generate(*ast, outputFile)) {
+    if (!codegen.generate(*ast, outputFile, optLevel)) {
         diags.dump(std::cerr);
         return 1;
     }
