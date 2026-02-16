@@ -16,6 +16,9 @@ ANTLR4 → C++ → LLVM IR pipeline without drowning in complexity.
 | Arrays `int[3]` | `[3 x i64]`, GEP (getelementptr) |
 | `print()` | External runtime calls (`tiny_print_int`, etc.) |
 | `string` | `i8*` global constants via `CreateGlobalStringPtr` |
+| Lambdas / closures | Closure structs, `malloc`, indirect calls |
+| First-class functions | Function types, higher-order functions |
+| Optimization | LLVM `PassBuilder` pipeline (`-O1` / `-O2` / `-O3`) |
 
 ## Build Pipeline
 
@@ -37,54 +40,20 @@ ANTLR4 → C++ → LLVM IR pipeline without drowning in complexity.
 
 ### Phase 1 — Lexer & Parser (ANTLR4) ✅
 
-```bash
-# Generate C++ lexer/parser from the grammar
-antlr4 -Dlanguage=Cpp -visitor -no-listener Tiny.g4
-
-# This produces:
-#   TinyLexer.h / .cpp
-#   TinyParser.h / .cpp
-#   TinyVisitor.h          ← base visitor interface
-#   TinyBaseVisitor.h      ← default (no-op) visitor to subclass
-```
-
 **Milestone:** Parse `examples.tiny` and dump the parse tree. ✅
 
 **What was built:**
-- ANTLR4 grammar (`grammar/Tiny.g4`) covering all language features
+- ANTLR4 grammar (`grammar/Tiny.g4`) covering all language features including lambda expressions and function types
 - CMake integration for automatic grammar regeneration
 - Token dumping via `--dump-tokens` flag
 - Parse error detection and reporting
 
 ### Phase 2 — AST Design (C++) ✅
 
-Clean AST separated from ANTLR's parse tree:
-
-```
-Program
-├── FunctionDecl { name, params[], returnType, body }
-├── VarDecl      { name, type, init, mutable }
-├── Assignment   { target, index?, value }
-├── IfStmt       { condition, thenBlock, elseBlock? }
-├── WhileStmt    { condition, body }
-├── ForStmt      { varName, start, end, body }
-├── ReturnStmt   { value? }
-├── PrintStmt    { args[] }
-├── Block        { statements[] }
-└── Expressions
-    ├── BinaryExpr   { op, left, right }
-    ├── UnaryExpr    { op, operand }
-    ├── CallExpr     { callee, args[] }
-    ├── IndexExpr    { array, index }
-    ├── IntLit, FloatLit, BoolLit, StringLit
-    ├── Identifier
-    └── ArrayLiteral { elements[] }
-```
-
 **Milestone:** `ASTBuilder` visitor converts parse tree → AST, pretty-prints it. ✅
 
 **What was built:**
-- `AST.h` — Full node hierarchy with CRTP-based visitor dispatch
+- `AST.h` — Full node hierarchy with CRTP-based visitor dispatch, including `LambdaExpr` and `TypeKind::Function`
 - `ASTBuilder` — ANTLR `TinyBaseVisitor` subclass that constructs AST nodes
 - `ASTPrinter` — Debugging visitor that pretty-prints the tree with indentation
 - `ASTBox` wrapper — Solved the `std::any` / `unique_ptr` incompatibility
@@ -93,15 +62,6 @@ Program
 
 ### Phase 3 — Semantic Analysis (C++) ✅
 
-Walks the AST to enforce language rules:
-
-1. **Symbol table** — scoped stack of maps: `name → {type, mutable?, location}`
-2. **Type checking** — binary ops require matching types, assignment respects declared type
-3. **Mutability enforcement** — `let` bindings cannot be reassigned
-4. **Function signatures** — verify call arity and argument types
-5. **Return type validation** — return values must match function signature
-6. **Forward references** — two-pass declaration allows mutual recursion
-
 **Milestone:** Report meaningful errors for type mismatches and undefined variables. ✅
 
 **What was built:**
@@ -109,22 +69,9 @@ Walks the AST to enforce language rules:
 - `SemanticAnalyzer` — `ASTVisitor` subclass that populates the symbol table and checks all rules
 - `Diagnostics` — Error/warning collector with source line numbers
 
-**Checks implemented:** undefined variables/functions, duplicate declarations, immutable reassignment, type mismatches in assignments/operators/returns, non-bool conditions, non-int array indices, function call arity and argument types, type inference from initializers.
+**Checks implemented:** undefined variables/functions, duplicate declarations, immutable reassignment, type mismatches in assignments/operators/returns, non-bool conditions, non-int array indices, function call arity and argument types, type inference from initializers, calling variables with function types.
 
 ### Phase 4 — LLVM IR Code Generation (C++) ✅
-
-`CodeGen` is an `ASTVisitor` subclass that emits LLVM IR using the C++ API:
-
-| Tiny Construct | LLVM IR Pattern |
-|---|---|
-| `let x: int = 42` | `alloca i64` → `store i64 42` |
-| `x + y` | `load` both → `add i64` (or `fadd double`) |
-| `if / else` | Three basic blocks + `br i1` |
-| `while` | Header, body, exit blocks + back-edge |
-| `for i in 0..n` | Desugars to while-style loop with alloca counter |
-| `fn add(a, b)` | `define i64 @add(i64 %a, i64 %b)` + entry BB |
-| `arr[i]` | `getelementptr` → `load` |
-| `print(...)` | `call @tiny_print_int(i64 %val)` + `@tiny_print_newline()` |
 
 **Milestone:** Generate `.ll` file, compile with `clang`, run native executable. ✅
 
@@ -138,10 +85,7 @@ Walks the AST to enforce language rules:
 ### Phase 5 — Link & Run ✅
 
 ```bash
-# Compile .tiny → .ll
 ./build/tinyc examples/hello.tiny -o output.ll
-
-# Link with runtime and run
 clang output.ll runtime/runtime.cpp -o hello -no-pie
 ./hello
 ```
@@ -150,14 +94,58 @@ clang output.ll runtime/runtime.cpp -o hello -no-pie
 - C++ runtime library with `extern "C"` functions: `tiny_print_int`, `tiny_print_float`, `tiny_print_str`, `tiny_print_bool`, `tiny_print_newline`
 - Full end-to-end pipeline: `.tiny` → parse → AST → semantic check → LLVM IR → native binary
 
+### Phase 5.5 — Optimization Passes ✅
+
+```bash
+./build/tinyc examples/fibonacci.tiny -o fib.ll -O2
+```
+
+**What was built:**
+- LLVM `PassBuilder` integration with `-O0` / `-O1` / `-O2` / `-O3` flags
+- Runs the full standard LLVM optimization pipeline (same passes as `clang -O2`): constant folding, dead code elimination, inlining, SROA, loop optimizations, GVN
+
+### Phase 6 — Closures & First-Class Functions ✅
+
+**Milestone:** Lambda expressions with capture, higher-order functions, function types as values. ✅
+
+```tiny
+fn makeAdder(n: int) -> fn(int) -> int {
+    return fn(x: int) -> int { return x + n; };
+}
+let add5 = makeAdder(5);
+print(add5(3));  // 8
+```
+
+**What was built across every compiler layer:**
+
+**Grammar** — Added `lambdaExpr` rule (`fn(params) -> type { body }` as a primary expression) and function type syntax (`fn(int, int) -> int`) in `typeSpec`, plus `typeList` rule.
+
+**AST** — Added `TypeKind::Function` with `paramTypes`/`returnType` on `TypeSpec`, `LambdaExpr` node (params, return type, body, `captures` vector), and `calleeExpr` on `CallExpr` for indirect calls.
+
+**ASTBuilder** — `buildType` handles `fn(types) -> type`. `visitPrimary` recognizes lambda expressions. `visitPostfix` detects when a call target isn't a simple `Identifier` and routes to indirect call path.
+
+**SemanticAnalyzer** — `visit(LambdaExpr)` type-checks the body and runs capture analysis. `findCaptures` walks the lambda body collecting all `Identifier` references, subtracts params and locals, stores the result in `node.captures`. `visit(CallExpr)` handles three cases: indirect expression calls, direct calls to function-typed variables, and traditional named function calls.
+
+**CodeGen** — Closure representation is `{ i8* fn_ptr, i8* env_ptr }`. `visit(LambdaExpr)` creates an internal LLVM function with an extra `i8* env` first parameter, heap-allocates an environment struct via `malloc`, copies captured values into it, and returns the closure struct. `emitClosureCall` extracts the function pointer and environment from the struct and dispatches through an indirect call.
+
+| LLVM concept | Where it's used |
+|---|---|
+| `StructType::create` | Closure struct `{ fnPtr, envPtr }` and per-lambda environment types |
+| `malloc` / heap allocation | Environment structs for captured variables |
+| `CreateBitCast` | Casting `i8*` ↔ typed environment pointers |
+| `CreateExtractValue` | Extracting fn/env from the closure struct |
+| `CreateInsertValue` | Building the closure struct |
+| `CreateStructGEP` | Accessing captured variables in the environment |
+| Indirect `CreateCall` | Calling through a function pointer |
+| `InternalLinkage` | Lambda functions are module-private |
+
 ## What's Next
 
 ### Possible Extensions
 
-- **Optimization passes** → `llvm::PassManager` (constant folding, dead code elimination, inlining)
-- **Closures / first-class functions** → LLVM function pointers
-- **Structs** → `llvm::StructType`
-- **Heap allocation** → `malloc` / GC
+- **Capture-by-reference** → store pointers to heap-allocated variables instead of copying values, enabling mutable closures
+- **Structs** → `llvm::StructType`, field access via GEP
+- **Heap allocation & GC** → `malloc` / reference counting / tracing GC
 - **Pattern matching** → `switch` instruction
 - **Modules / imports** → multiple LLVM modules + linking
 - **String operations** → concatenation, length, slicing via runtime library

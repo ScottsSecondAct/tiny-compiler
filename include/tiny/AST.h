@@ -36,6 +36,7 @@ struct BinaryExpr;
 struct UnaryExpr;
 struct CallExpr;
 struct IndexExpr;
+struct LambdaExpr;
 
 // ── Source location (for error messages) ─────────────────────────────────────
 
@@ -52,6 +53,7 @@ enum class TypeKind {
     Bool,
     String,
     Array,
+    Function, // first-class function / closure type
     Void,     // for functions with no return type
     Unknown,  // for type inference (before resolution)
 };
@@ -60,6 +62,10 @@ struct TypeSpec {
     TypeKind kind = TypeKind::Unknown;
     int arraySize = 0;                          // only used when kind == Array
     std::shared_ptr<TypeSpec> elementType;       // only used when kind == Array
+
+    // Function type fields (kind == Function)
+    std::vector<std::shared_ptr<TypeSpec>> paramTypes;   // parameter types
+    std::shared_ptr<TypeSpec> returnType;                 // return type
 
     static TypeSpec makeInt()    { return {TypeKind::Int}; }
     static TypeSpec makeFloat()  { return {TypeKind::Float}; }
@@ -74,12 +80,31 @@ struct TypeSpec {
         return ts;
     }
 
+    static TypeSpec makeFunction(std::vector<TypeSpec> params, TypeSpec ret) {
+        TypeSpec ts;
+        ts.kind = TypeKind::Function;
+        for (auto& p : params) {
+            ts.paramTypes.push_back(std::make_shared<TypeSpec>(std::move(p)));
+        }
+        ts.returnType = std::make_shared<TypeSpec>(std::move(ret));
+        return ts;
+    }
+
     bool operator==(const TypeSpec& other) const {
         if (kind != other.kind) return false;
         if (kind == TypeKind::Array) {
             return arraySize == other.arraySize
                 && elementType && other.elementType
                 && *elementType == *other.elementType;
+        }
+        if (kind == TypeKind::Function) {
+            if (paramTypes.size() != other.paramTypes.size()) return false;
+            for (size_t i = 0; i < paramTypes.size(); i++) {
+                if (!paramTypes[i] || !other.paramTypes[i]) return false;
+                if (*paramTypes[i] != *other.paramTypes[i]) return false;
+            }
+            if (!returnType || !other.returnType) return false;
+            return *returnType == *other.returnType;
         }
         return true;
     }
@@ -96,6 +121,18 @@ struct TypeSpec {
             case TypeKind::Unknown: return "unknown";
             case TypeKind::Array:
                 return elementType->toString() + "[" + std::to_string(arraySize) + "]";
+            case TypeKind::Function: {
+                std::string s = "fn(";
+                for (size_t i = 0; i < paramTypes.size(); i++) {
+                    if (i > 0) s += ", ";
+                    s += paramTypes[i]->toString();
+                }
+                s += ")";
+                if (returnType && returnType->kind != TypeKind::Void) {
+                    s += " -> " + returnType->toString();
+                }
+                return s;
+            }
         }
         return "?";
     }
@@ -121,6 +158,7 @@ public:
     virtual std::any visit(UnaryExpr& node)    = 0;
     virtual std::any visit(CallExpr& node)     = 0;
     virtual std::any visit(IndexExpr& node)    = 0;
+    virtual std::any visit(LambdaExpr& node)   = 0;
 
     // Statements
     virtual std::any visit(VarDecl& node)      = 0;
@@ -197,6 +235,13 @@ inline std::unique_ptr<ASTNode> unboxNode(std::any&& a) {
 // We alias expression pointers for clarity
 using ExprPtr = std::unique_ptr<ASTNode>;
 
+// ── Param (shared by FunctionDecl and LambdaExpr) ──────────────────────────
+
+struct Param {
+    std::string name;
+    TypeSpec type;
+};
+
 struct IntLit : ASTNodeBase<IntLit> {
     int64_t value;
     explicit IntLit(int64_t v) : value(v) {}
@@ -251,13 +296,24 @@ struct UnaryExpr : ASTNodeBase<UnaryExpr> {
 };
 
 struct CallExpr : ASTNodeBase<CallExpr> {
-    std::string callee;
+    std::string callee;            // name if calling a named function
+    ExprPtr calleeExpr;            // non-null when calling an expression (e.g. lambda)
     std::vector<ExprPtr> args;
 };
 
 struct IndexExpr : ASTNodeBase<IndexExpr> {
     ExprPtr array;
     ExprPtr index;
+};
+
+struct LambdaExpr : ASTNodeBase<LambdaExpr> {
+    std::vector<Param> params;
+    TypeSpec returnType;               // Void if not specified
+    std::unique_ptr<Block> body;
+
+    /// Filled in by semantic analysis: names of variables captured from
+    /// enclosing scopes (needed by CodeGen to build the closure environment)
+    std::vector<std::string> captures;
 };
 
 // ── Statement Nodes ─────────────────────────────────────────────────────────
@@ -313,11 +369,6 @@ struct Block : ASTNodeBase<Block> {
 };
 
 // ── Function Declaration ────────────────────────────────────────────────────
-
-struct Param {
-    std::string name;
-    TypeSpec type;
-};
 
 struct FunctionDecl : ASTNodeBase<FunctionDecl> {
     std::string name;

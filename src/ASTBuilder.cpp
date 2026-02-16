@@ -14,10 +14,27 @@ SourceLoc ASTBuilder::getLoc(antlr4::ParserRuleContext* ctx) {
 TypeSpec ASTBuilder::buildType(TinyParser::TypeSpecContext* ctx) {
     if (!ctx) return TypeSpec::makeUnknown();
 
-    if (ctx->typeSpec()) {
+    // Array type: typeSpec '[' INT_LIT ']'
+    if (ctx->typeSpec() && ctx->INT_LIT()) {
         auto elemType = buildType(ctx->typeSpec());
         int size = std::stoi(ctx->INT_LIT()->getText());
         return TypeSpec::makeArray(elemType, size);
+    }
+
+    // Function type: 'fn' '(' typeList? ')' ('->' typeSpec)?
+    if (ctx->FN()) {
+        std::vector<TypeSpec> paramTypes;
+        if (ctx->typeList()) {
+            for (auto* tCtx : ctx->typeList()->typeSpec()) {
+                paramTypes.push_back(buildType(tCtx));
+            }
+        }
+        TypeSpec retType = TypeSpec::makeVoid();
+        // The return type is the direct child typeSpec (after '->'), if present
+        if (ctx->typeSpec()) {
+            retType = buildType(ctx->typeSpec());
+        }
+        return TypeSpec::makeFunction(std::move(paramTypes), retType);
     }
 
     std::string text = ctx->getText();
@@ -41,11 +58,9 @@ std::unique_ptr<Program> ASTBuilder::buildProgram(TinyParser::ProgramContext* ct
 std::any ASTBuilder::visitProgram(TinyParser::ProgramContext* ctx) {
     auto program = std::make_unique<Program>();
     program->loc = getLoc(ctx);
-
     for (auto* declCtx : ctx->declaration()) {
         program->declarations.push_back(unboxNode(visitDeclaration(declCtx)));
     }
-
     return boxNode(std::move(program));
 }
 
@@ -60,7 +75,6 @@ std::any ASTBuilder::visitFunctionDecl(TinyParser::FunctionDeclContext* ctx) {
     auto func = std::make_unique<FunctionDecl>();
     func->loc = getLoc(ctx);
     func->name = ctx->IDENT()->getText();
-
     if (ctx->paramList()) {
         for (auto* paramCtx : ctx->paramList()->param()) {
             Param p;
@@ -69,12 +83,9 @@ std::any ASTBuilder::visitFunctionDecl(TinyParser::FunctionDeclContext* ctx) {
             func->params.push_back(std::move(p));
         }
     }
-
     func->returnType = ctx->typeSpec() ? buildType(ctx->typeSpec()) : TypeSpec::makeVoid();
-
     auto bodyNode = unboxNode(visitBlock(ctx->block()));
     func->body = std::unique_ptr<Block>(static_cast<Block*>(bodyNode.release()));
-
     return boxNode(std::move(func));
 }
 
@@ -90,7 +101,6 @@ std::any ASTBuilder::visitStatement(TinyParser::StatementContext* ctx) {
     if (ctx->forStmt())     return visitForStmt(ctx->forStmt());
     if (ctx->exprStmt())    return visitExprStmt(ctx->exprStmt());
     if (ctx->block())       return visitBlock(ctx->block());
-
     throw std::runtime_error("Unknown statement at line " +
                              std::to_string(ctx->getStart()->getLine()));
 }
@@ -109,7 +119,6 @@ std::any ASTBuilder::visitAssignment(TinyParser::AssignmentContext* ctx) {
     auto assign = std::make_unique<Assignment>();
     assign->loc = getLoc(ctx);
     assign->target = ctx->IDENT()->getText();
-
     auto exprs = ctx->expression();
     if (exprs.size() == 2) {
         assign->index = unboxNode(visitExpression(exprs[0]));
@@ -143,10 +152,8 @@ std::any ASTBuilder::visitIfStmt(TinyParser::IfStmtContext* ctx) {
     auto ifNode = std::make_unique<IfStmt>();
     ifNode->loc = getLoc(ctx);
     ifNode->condition = unboxNode(visitExpression(ctx->expression()));
-
     auto blocks = ctx->block();
     ifNode->thenBlock = unboxNode(visitBlock(blocks[0]));
-
     if (ctx->ifStmt()) {
         ifNode->elseBlock = unboxNode(visitIfStmt(ctx->ifStmt()));
     } else if (blocks.size() > 1) {
@@ -327,7 +334,6 @@ std::any ASTBuilder::visitUnary(TinyParser::UnaryContext* ctx) {
 
 std::any ASTBuilder::visitPostfix(TinyParser::PostfixContext* ctx) {
     auto result = unboxNode(visitPrimary(ctx->primary()));
-
     auto children = ctx->children;
     for (size_t i = 1; i < children.size(); i++) {
         auto* terminal = dynamic_cast<antlr4::tree::TerminalNode*>(children[i]);
@@ -337,8 +343,13 @@ std::any ASTBuilder::visitPostfix(TinyParser::PostfixContext* ctx) {
         if (text == "(") {
             auto call = std::make_unique<CallExpr>();
             call->loc = getLoc(ctx);
+            // If callee is a simple identifier, use direct name; else indirect call
             auto* ident = dynamic_cast<Identifier*>(result.get());
-            if (ident) call->callee = ident->name;
+            if (ident) {
+                call->callee = ident->name;
+            } else {
+                call->calleeExpr = std::move(result);
+            }
             for (size_t j = i + 1; j < children.size(); j++) {
                 auto* exprList = dynamic_cast<TinyParser::ExpressionListContext*>(children[j]);
                 if (exprList) {
@@ -377,40 +388,51 @@ std::any ASTBuilder::visitPostfix(TinyParser::PostfixContext* ctx) {
 std::any ASTBuilder::visitPrimary(TinyParser::PrimaryContext* ctx) {
     if (ctx->INT_LIT()) {
         auto n = std::make_unique<IntLit>(std::stoll(ctx->INT_LIT()->getText()));
-        n->loc = getLoc(ctx);
-        return boxNode(std::move(n));
+        n->loc = getLoc(ctx); return boxNode(std::move(n));
     }
     if (ctx->FLOAT_LIT()) {
         auto n = std::make_unique<FloatLit>(std::stod(ctx->FLOAT_LIT()->getText()));
-        n->loc = getLoc(ctx);
-        return boxNode(std::move(n));
+        n->loc = getLoc(ctx); return boxNode(std::move(n));
     }
     if (ctx->STRING_LIT()) {
         std::string raw = ctx->STRING_LIT()->getText();
         auto n = std::make_unique<StringLit>(raw.substr(1, raw.size() - 2));
-        n->loc = getLoc(ctx);
-        return boxNode(std::move(n));
+        n->loc = getLoc(ctx); return boxNode(std::move(n));
     }
     if (ctx->getText() == "true") {
         auto n = std::make_unique<BoolLit>(true);
-        n->loc = getLoc(ctx);
-        return boxNode(std::move(n));
+        n->loc = getLoc(ctx); return boxNode(std::move(n));
     }
     if (ctx->getText() == "false") {
         auto n = std::make_unique<BoolLit>(false);
-        n->loc = getLoc(ctx);
-        return boxNode(std::move(n));
+        n->loc = getLoc(ctx); return boxNode(std::move(n));
     }
     if (ctx->IDENT()) {
         auto n = std::make_unique<Identifier>(ctx->IDENT()->getText());
-        n->loc = getLoc(ctx);
-        return boxNode(std::move(n));
+        n->loc = getLoc(ctx); return boxNode(std::move(n));
     }
+    if (ctx->lambdaExpr()) return visitLambdaExpr(ctx->lambdaExpr());
     if (ctx->arrayLiteral()) return visitArrayLiteral(ctx->arrayLiteral());
     if (ctx->expression()) return visitExpression(ctx->expression());
-
     throw std::runtime_error("Unknown primary at line " +
                              std::to_string(ctx->getStart()->getLine()));
+}
+
+std::any ASTBuilder::visitLambdaExpr(TinyParser::LambdaExprContext* ctx) {
+    auto lambda = std::make_unique<LambdaExpr>();
+    lambda->loc = getLoc(ctx);
+    if (ctx->paramList()) {
+        for (auto* paramCtx : ctx->paramList()->param()) {
+            Param p;
+            p.name = paramCtx->IDENT()->getText();
+            p.type = buildType(paramCtx->typeSpec());
+            lambda->params.push_back(std::move(p));
+        }
+    }
+    lambda->returnType = ctx->typeSpec() ? buildType(ctx->typeSpec()) : TypeSpec::makeVoid();
+    auto bodyNode = unboxNode(visitBlock(ctx->block()));
+    lambda->body = std::unique_ptr<Block>(static_cast<Block*>(bodyNode.release()));
+    return boxNode(std::move(lambda));
 }
 
 std::any ASTBuilder::visitArrayLiteral(TinyParser::ArrayLiteralContext* ctx) {

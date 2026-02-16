@@ -26,6 +26,9 @@ llvm::Type* CodeGen::toLLVMType(const TypeSpec& type) {
         case TypeKind::Bool:   return llvm::Type::getInt1Ty(context_);
         case TypeKind::String: return llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context_));
         case TypeKind::Void:   return llvm::Type::getVoidTy(context_);
+        case TypeKind::Function:
+            // Function values are represented as a closure struct: { fnPtr, envPtr }
+            return getClosureType();
         case TypeKind::Array:
             if (type.elementType) {
                 auto* elemTy = toLLVMType(*type.elementType);
@@ -106,6 +109,14 @@ void CodeGen::declareRuntimeFunctions() {
     // void tiny_print_newline()
     module_->getOrInsertFunction("tiny_print_newline",
         llvm::FunctionType::get(voidTy, {}, false));
+
+    // void* malloc(i64) — for closure environments
+    module_->getOrInsertFunction("malloc",
+        llvm::FunctionType::get(i8PtrTy, {i64Ty}, false));
+
+    // void free(void*) — for future cleanup
+    module_->getOrInsertFunction("free",
+        llvm::FunctionType::get(voidTy, {i8PtrTy}, false));
 }
 
 void CodeGen::emitPrintArg(llvm::Value* val, const TypeSpec& type) {
@@ -150,6 +161,12 @@ TypeSpec CodeGen::inferExprType(ASTNode& node) {
         if (var) return var->type;
     }
 
+    if (auto* lambda = dynamic_cast<LambdaExpr*>(&node)) {
+        std::vector<TypeSpec> paramTypes;
+        for (auto& p : lambda->params) paramTypes.push_back(p.type);
+        return TypeSpec::makeFunction(paramTypes, lambda->returnType);
+    }
+
     if (auto* bin = dynamic_cast<BinaryExpr*>(&node)) {
         switch (bin->op) {
             case BinOp::Eq: case BinOp::Neq:
@@ -168,6 +185,20 @@ TypeSpec CodeGen::inferExprType(ASTNode& node) {
     }
 
     if (auto* call = dynamic_cast<CallExpr*>(&node)) {
+        // Indirect call
+        if (call->calleeExpr) {
+            auto calleeTy = inferExprType(*call->calleeExpr);
+            if (calleeTy.kind == TypeKind::Function && calleeTy.returnType) {
+                return *calleeTy.returnType;
+            }
+        }
+        // Direct call — check if it's a closure variable
+        if (!call->callee.empty()) {
+            auto* var = lookupVar(call->callee);
+            if (var && var->type.kind == TypeKind::Function && var->type.returnType) {
+                return *var->type.returnType;
+            }
+        }
         auto* fn = module_->getFunction(call->callee);
         if (fn) {
             auto* retTy = fn->getReturnType();
@@ -179,7 +210,6 @@ TypeSpec CodeGen::inferExprType(ASTNode& node) {
     }
 
     if (auto* idx = dynamic_cast<IndexExpr*>(&node)) {
-        // Array element type — check the array's type
         if (auto* arrId = dynamic_cast<Identifier*>(idx->array.get())) {
             auto* var = lookupVar(arrId->name);
             if (var && var->type.kind == TypeKind::Array && var->type.elementType) {
@@ -696,13 +726,46 @@ std::any CodeGen::visit(UnaryExpr& node) {
 }
 
 std::any CodeGen::visit(CallExpr& node) {
+    // ── Indirect call through an expression (e.g. lambda or variable) ────
+    if (node.calleeExpr) {
+        auto calleeResult = node.calleeExpr->accept(*this);
+        auto* closureVal = getValue(calleeResult);
+        if (!closureVal) return static_cast<llvm::Value*>(nullptr);
+
+        TypeSpec fnType = inferExprType(*node.calleeExpr);
+        std::vector<llvm::Value*> args;
+        for (auto& arg : node.args) {
+            auto result = arg->accept(*this);
+            auto* val = getValue(result);
+            if (val) args.push_back(val);
+        }
+
+        return static_cast<llvm::Value*>(emitClosureCall(closureVal, fnType, args));
+    }
+
+    // ── Direct call by name ──────────────────────────────────────────────
+    // First check if it's a variable holding a closure
+    auto* varInfo = lookupVar(node.callee);
+    if (varInfo && varInfo->type.kind == TypeKind::Function) {
+        // Load the closure struct from the variable
+        auto* closureVal = builder_.CreateLoad(
+            getClosureType(), varInfo->alloca, node.callee);
+
+        std::vector<llvm::Value*> args;
+        for (auto& arg : node.args) {
+            auto result = arg->accept(*this);
+            auto* val = getValue(result);
+            if (val) args.push_back(val);
+        }
+
+        return static_cast<llvm::Value*>(emitClosureCall(closureVal, varInfo->type, args));
+    }
+
+    // Regular function call
     auto* callee = module_->getFunction(node.callee);
     if (!callee) {
-        // Also check our functions_ map
         auto it = functions_.find(node.callee);
-        if (it != functions_.end()) {
-            callee = it->second;
-        }
+        if (it != functions_.end()) callee = it->second;
     }
 
     if (!callee) {
@@ -750,6 +813,208 @@ std::any CodeGen::visit(IndexExpr& node) {
     llvm::Type* elemLLVMTy = toLLVMType(*var->type.elementType);
     return static_cast<llvm::Value*>(
         builder_.CreateLoad(elemLLVMTy, elemPtr, "elem"));
+}
+
+// ── Lambda / Closure Code Generation ────────────────────────────────────────
+//
+// Closure representation:
+//   { i8* @fn_ptr, i8* @env_ptr }
+//
+// The function takes an extra first argument (i8* env) which it casts to the
+// environment struct to access captured variables. The environment is heap-
+// allocated via malloc and contains copies of captured values at the time the
+// lambda is created.
+
+std::string CodeGen::freshLambdaName() {
+    return "__lambda_" + std::to_string(lambdaCounter_++);
+}
+
+llvm::StructType* CodeGen::getClosureType() {
+    // Named struct so all closures share the same LLVM type
+    auto* existing = llvm::StructType::getTypeByName(context_, "closure");
+    if (existing) return existing;
+
+    auto* i8PtrTy = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context_));
+    return llvm::StructType::create(context_, {i8PtrTy, i8PtrTy}, "closure");
+}
+
+llvm::FunctionType* CodeGen::getClosureFnType(const TypeSpec& fnType) {
+    // First param: i8* env pointer
+    std::vector<llvm::Type*> paramTypes;
+    paramTypes.push_back(llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context_)));
+
+    // Then user params
+    for (auto& pt : fnType.paramTypes) {
+        paramTypes.push_back(toLLVMType(*pt));
+    }
+
+    llvm::Type* retTy = fnType.returnType ?
+        toLLVMType(*fnType.returnType) : llvm::Type::getVoidTy(context_);
+
+    return llvm::FunctionType::get(retTy, paramTypes, false);
+}
+
+llvm::Value* CodeGen::emitClosureCall(llvm::Value* closureVal, const TypeSpec& fnType,
+                                       const std::vector<llvm::Value*>& userArgs) {
+    auto* closureTy = getClosureType();
+    auto* i8PtrTy = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context_));
+
+    // Extract function pointer and environment pointer from the closure struct
+    auto* fnPtrRaw = builder_.CreateExtractValue(closureVal, 0, "fn_ptr");
+    auto* envPtr   = builder_.CreateExtractValue(closureVal, 1, "env_ptr");
+
+    // Get the actual function type (with env as first param)
+    auto* fnTy = getClosureFnType(fnType);
+
+    // Build args: env first, then user args
+    std::vector<llvm::Value*> args;
+    args.push_back(envPtr);
+    args.insert(args.end(), userArgs.begin(), userArgs.end());
+
+    llvm::Type* retTy = fnType.returnType ?
+        toLLVMType(*fnType.returnType) : llvm::Type::getVoidTy(context_);
+
+    if (retTy->isVoidTy()) {
+        builder_.CreateCall(fnTy, fnPtrRaw, args);
+        return nullptr;
+    }
+    return builder_.CreateCall(fnTy, fnPtrRaw, args, "closure_call");
+}
+
+std::any CodeGen::visit(LambdaExpr& node) {
+    auto* i8PtrTy = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context_));
+
+    // 1. Build the function type for this lambda
+    std::vector<TypeSpec> paramTypeSpecs;
+    for (auto& p : node.params) paramTypeSpecs.push_back(p.type);
+    auto fnTypeSpec = TypeSpec::makeFunction(paramTypeSpecs, node.returnType);
+
+    // 2. Create the LLVM function (with env* as first param)
+    auto* fnTy = getClosureFnType(fnTypeSpec);
+    std::string fnName = freshLambdaName();
+    auto* fn = llvm::Function::Create(
+        fnTy, llvm::Function::InternalLinkage, fnName, module_.get());
+
+    // 3. Build the environment struct type from captures
+    //    env = { type_of_capture_0, type_of_capture_1, ... }
+    std::vector<llvm::Type*> envFieldTypes;
+    std::vector<VarInfo*> capturedVars;
+    for (auto& capName : node.captures) {
+        auto* var = lookupVar(capName);
+        if (var) {
+            envFieldTypes.push_back(toLLVMType(var->type));
+            capturedVars.push_back(var);
+        }
+    }
+
+    llvm::StructType* envStructTy = nullptr;
+    if (!envFieldTypes.empty()) {
+        envStructTy = llvm::StructType::create(context_, envFieldTypes, fnName + "_env");
+    }
+
+    // 4. Allocate and populate the environment at the CURRENT insert point
+    //    (before we switch to generating the lambda body)
+    llvm::Value* envAlloc = nullptr;
+    if (envStructTy) {
+        // malloc(sizeof(env_struct))
+        auto* mallocFn = module_->getOrInsertFunction("malloc",
+            llvm::FunctionType::get(i8PtrTy,
+                {llvm::Type::getInt64Ty(context_)}, false)).getCallee();
+        auto* envSize = llvm::ConstantExpr::getSizeOf(envStructTy);
+        auto* envSizeI64 = builder_.CreateIntCast(envSize,
+            llvm::Type::getInt64Ty(context_), false);
+        auto* rawMem = builder_.CreateCall(
+            llvm::cast<llvm::Function>(mallocFn)->getFunctionType(),
+            mallocFn, {envSizeI64}, "env_raw");
+        envAlloc = rawMem;
+
+        // Cast to env struct pointer and store captured values
+        auto* envPtr = builder_.CreateBitCast(rawMem,
+            llvm::PointerType::getUnqual(envStructTy), "env_ptr");
+        for (size_t i = 0; i < capturedVars.size(); i++) {
+            auto* fieldPtr = builder_.CreateStructGEP(envStructTy, envPtr, i, "cap_ptr");
+            auto* loadedVal = builder_.CreateLoad(
+                toLLVMType(capturedVars[i]->type), capturedVars[i]->alloca,
+                node.captures[i] + ".cap");
+            builder_.CreateStore(loadedVal, fieldPtr);
+        }
+    } else {
+        envAlloc = llvm::ConstantPointerNull::get(i8PtrTy);
+    }
+
+    // 5. Generate the lambda function body
+    //    Save and restore the current insert point
+    auto* savedBlock = builder_.GetInsertBlock();
+    auto savedPoint = builder_.GetInsertPoint();
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", fn);
+    builder_.SetInsertPoint(entry);
+
+    pushScope();
+
+    // Set up the env parameter — first arg
+    auto argIt = fn->arg_begin();
+    llvm::Value* envArg = &*argIt;
+    envArg->setName("env");
+    argIt++;
+
+    // If we have captures, cast env and load them into local allocas
+    if (envStructTy) {
+        auto* envCast = builder_.CreateBitCast(envArg,
+            llvm::PointerType::getUnqual(envStructTy), "env_cast");
+        for (size_t i = 0; i < node.captures.size(); i++) {
+            auto* fieldPtr = builder_.CreateStructGEP(envStructTy, envCast, i, "cap_load_ptr");
+            auto* capType = envFieldTypes[i];
+            auto* loadedVal = builder_.CreateLoad(capType, fieldPtr, node.captures[i]);
+
+            auto* localAlloca = createEntryBlockAlloca(fn, node.captures[i], capType);
+            builder_.CreateStore(loadedVal, localAlloca);
+            declareVar(node.captures[i], localAlloca, capturedVars[i]->type);
+        }
+    }
+
+    // Set up user parameter allocas
+    for (size_t i = 0; i < node.params.size(); i++) {
+        auto& param = node.params[i];
+        llvm::Value* argVal = &*argIt;
+        argVal->setName(param.name);
+        auto* alloca = createEntryBlockAlloca(fn, param.name, argVal->getType());
+        builder_.CreateStore(argVal, alloca);
+        declareVar(param.name, alloca, param.type);
+        argIt++;
+    }
+
+    // Generate body
+    for (auto& stmt : node.body->statements) {
+        stmt->accept(*this);
+        if (builder_.GetInsertBlock()->getTerminator()) break;
+    }
+
+    // Add implicit return if needed
+    if (!builder_.GetInsertBlock()->getTerminator()) {
+        if (node.returnType.kind == TypeKind::Void) {
+            builder_.CreateRetVoid();
+        } else {
+            // Return a zero-value default
+            builder_.CreateRet(llvm::Constant::getNullValue(
+                toLLVMType(node.returnType)));
+        }
+    }
+
+    popScope();
+
+    // 6. Restore the caller's insert point
+    builder_.SetInsertPoint(savedBlock, savedPoint);
+
+    // 7. Build the closure struct: { fn_ptr, env_ptr }
+    auto* closureTy = getClosureType();
+    auto* fnPtrCast = builder_.CreateBitCast(fn, i8PtrTy, "fn_cast");
+
+    llvm::Value* closureVal = llvm::UndefValue::get(closureTy);
+    closureVal = builder_.CreateInsertValue(closureVal, fnPtrCast, 0, "closure.fn");
+    closureVal = builder_.CreateInsertValue(closureVal, envAlloc, 1, "closure.env");
+
+    return static_cast<llvm::Value*>(closureVal);
 }
 
 // ── Optimization Passes ─────────────────────────────────────────────────────

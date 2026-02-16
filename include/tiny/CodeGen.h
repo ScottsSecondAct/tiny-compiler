@@ -46,6 +46,7 @@ public:
     std::any visit(UnaryExpr& node) override;
     std::any visit(CallExpr& node) override;
     std::any visit(IndexExpr& node) override;
+    std::any visit(LambdaExpr& node) override;
 
     // ── Statements (return nullptr) ─────────────────────────────────────
     std::any visit(VarDecl& node) override;
@@ -109,6 +110,27 @@ private:
 
     /// Run LLVM optimization passes on the module
     void runOptimizations(OptLevel level);
+
+    // ── Closure support ─────────────────────────────────────────────────
+
+    /// Counter for generating unique lambda function names
+    int lambdaCounter_ = 0;
+
+    /// Generate a unique name for a lambda function
+    std::string freshLambdaName();
+
+    /// Get the LLVM closure struct type: { fnPtr, envPtr }
+    /// fnPtr: pointer to the actual function (takes env* as first arg + user params)
+    /// envPtr: i8* pointing to the heap-allocated environment
+    llvm::StructType* getClosureType();
+
+    /// Get the LLVM type for the raw function inside a closure
+    /// (prepends an i8* env parameter before the user-visible params)
+    llvm::FunctionType* getClosureFnType(const TypeSpec& fnType);
+
+    /// Emit a call through a closure value (extract fn ptr + env, then call)
+    llvm::Value* emitClosureCall(llvm::Value* closureVal, const TypeSpec& fnType,
+                                  const std::vector<llvm::Value*>& args);
 };
 
 } // namespace tiny

@@ -37,6 +37,7 @@ public:
     std::any visit(UnaryExpr& node) override;
     std::any visit(CallExpr& node) override;
     std::any visit(IndexExpr& node) override;
+    std::any visit(LambdaExpr& node) override;
 
     // ── Statements ──────────────────────────────────────────────────────
     std::any visit(VarDecl& node) override;
@@ -80,6 +81,10 @@ private:
     void declareBuiltin(const std::string& name,
                         const std::vector<TypeSpec>& paramTypes,
                         const TypeSpec& returnType);
+
+    /// Collect the names of all variables captured by a lambda
+    /// (referenced inside the body but not declared as params or locally)
+    void findCaptures(LambdaExpr& node);
 };
 
 } // namespace tiny

@@ -1,5 +1,6 @@
 #include "tiny/SemanticAnalyzer.h"
 #include <any>
+#include <set>
 
 namespace tiny {
 
@@ -447,34 +448,91 @@ std::any SemanticAnalyzer::visit(UnaryExpr& node) {
 }
 
 std::any SemanticAnalyzer::visit(CallExpr& node) {
+    // Indirect call: calleeExpr is set (e.g. lambda or variable holding fn)
+    if (node.calleeExpr) {
+        auto calleeResult = node.calleeExpr->accept(*this);
+        TypeSpec calleeType = getType(calleeResult);
+
+        if (calleeType.kind == TypeKind::Unknown) {
+            // Can't check further
+            for (auto& arg : node.args) arg->accept(*this);
+            return TypeSpec::makeUnknown();
+        }
+
+        if (calleeType.kind != TypeKind::Function) {
+            diags_.error(node, "expression is not callable (type: '"
+                         + calleeType.toString() + "')");
+            for (auto& arg : node.args) arg->accept(*this);
+            return TypeSpec::makeUnknown();
+        }
+
+        // Check arity
+        if (node.args.size() != calleeType.paramTypes.size()) {
+            diags_.error(node, "function expects "
+                         + std::to_string(calleeType.paramTypes.size())
+                         + " argument(s), got " + std::to_string(node.args.size()));
+            return calleeType.returnType ? *calleeType.returnType : TypeSpec::makeVoid();
+        }
+
+        // Check argument types
+        for (size_t i = 0; i < node.args.size(); i++) {
+            auto argResult = node.args[i]->accept(*this);
+            TypeSpec argType = getType(argResult);
+            if (calleeType.paramTypes[i]) {
+                checkTypesMatch(*calleeType.paramTypes[i], argType, *node.args[i],
+                                "argument " + std::to_string(i + 1));
+            }
+        }
+
+        return calleeType.returnType ? *calleeType.returnType : TypeSpec::makeVoid();
+    }
+
+    // Direct call by name
     Symbol* sym = symbols_.lookup(node.callee);
     if (!sym) {
         diags_.error(node, "undefined function '" + node.callee + "'");
         return TypeSpec::makeUnknown();
     }
 
-    if (!sym->isFunction) {
-        diags_.error(node, "'" + node.callee + "' is not a function");
-        return TypeSpec::makeUnknown();
-    }
-
-    // Check argument count
-    if (node.args.size() != sym->paramTypes.size()) {
-        diags_.error(node, "function '" + node.callee + "' expects "
-                     + std::to_string(sym->paramTypes.size()) + " argument(s), got "
-                     + std::to_string(node.args.size()));
+    // The symbol could be a declared function OR a variable with function type
+    if (sym->isFunction) {
+        // Traditional function call
+        if (node.args.size() != sym->paramTypes.size()) {
+            diags_.error(node, "function '" + node.callee + "' expects "
+                         + std::to_string(sym->paramTypes.size()) + " argument(s), got "
+                         + std::to_string(node.args.size()));
+            return sym->returnType;
+        }
+        for (size_t i = 0; i < node.args.size(); i++) {
+            auto argResult = node.args[i]->accept(*this);
+            TypeSpec argType = getType(argResult);
+            checkTypesMatch(sym->paramTypes[i], argType, *node.args[i],
+                            "argument " + std::to_string(i + 1) + " of '" + node.callee + "'");
+        }
         return sym->returnType;
     }
 
-    // Check argument types
-    for (size_t i = 0; i < node.args.size(); i++) {
-        auto argResult = node.args[i]->accept(*this);
-        TypeSpec argType = getType(argResult);
-        checkTypesMatch(sym->paramTypes[i], argType, *node.args[i],
-                        "argument " + std::to_string(i + 1) + " of '" + node.callee + "'");
+    // Variable with function type — treat as indirect call
+    if (sym->type.kind == TypeKind::Function) {
+        if (node.args.size() != sym->type.paramTypes.size()) {
+            diags_.error(node, "'" + node.callee + "' expects "
+                         + std::to_string(sym->type.paramTypes.size())
+                         + " argument(s), got " + std::to_string(node.args.size()));
+            return sym->type.returnType ? *sym->type.returnType : TypeSpec::makeVoid();
+        }
+        for (size_t i = 0; i < node.args.size(); i++) {
+            auto argResult = node.args[i]->accept(*this);
+            TypeSpec argType = getType(argResult);
+            if (sym->type.paramTypes[i]) {
+                checkTypesMatch(*sym->type.paramTypes[i], argType, *node.args[i],
+                                "argument " + std::to_string(i + 1) + " of '" + node.callee + "'");
+            }
+        }
+        return sym->type.returnType ? *sym->type.returnType : TypeSpec::makeVoid();
     }
 
-    return sym->returnType;
+    diags_.error(node, "'" + node.callee + "' is not a function");
+    return TypeSpec::makeUnknown();
 }
 
 std::any SemanticAnalyzer::visit(IndexExpr& node) {
@@ -506,6 +564,185 @@ std::any SemanticAnalyzer::visit(IndexExpr& node) {
         return *arrayType.elementType;
     }
     return TypeSpec::makeUnknown();
+}
+
+std::any SemanticAnalyzer::visit(LambdaExpr& node) {
+    // Build the function type for this lambda
+    std::vector<TypeSpec> paramTypesList;
+    for (auto& p : node.params) {
+        paramTypesList.push_back(p.type);
+    }
+    auto fnType = TypeSpec::makeFunction(paramTypesList, node.returnType);
+
+    // Push scope for lambda body
+    symbols_.pushScope();
+
+    // Declare parameters
+    for (auto& param : node.params) {
+        Symbol sym;
+        sym.name = param.name;
+        sym.type = param.type;
+        sym.isMutable = false;
+        sym.declaredAt = node.loc;
+        if (!symbols_.declare(sym)) {
+            diags_.error(node, "duplicate parameter name '" + param.name + "'");
+        }
+    }
+
+    // Track return type
+    TypeSpec* prevReturnType = currentReturnType_;
+    currentReturnType_ = &node.returnType;
+
+    // Analyze body
+    node.body->accept(*this);
+
+    currentReturnType_ = prevReturnType;
+    symbols_.popScope();
+
+    // Capture analysis: find variables used in the body that come from
+    // enclosing scopes (not the lambda's own params or locals)
+    findCaptures(node);
+
+    return fnType;
+}
+
+// ── Capture Analysis ────────────────────────────────────────────────────────
+//
+// Walk the lambda body to find Identifier references that resolve to variables
+// in enclosing scopes (not the lambda's own parameters or local declarations).
+// This is a conservative approach: we collect all referenced names, then subtract
+// params and locals to find captures.
+
+namespace {
+
+/// Recursively collect all Identifier names referenced in a subtree
+void collectIdentifiers(ASTNode* node, std::vector<std::string>& names) {
+    if (!node) return;
+    if (auto* id = dynamic_cast<Identifier*>(node)) {
+        names.push_back(id->name);
+        return;
+    }
+    if (auto* bin = dynamic_cast<BinaryExpr*>(node)) {
+        collectIdentifiers(bin->left.get(), names);
+        collectIdentifiers(bin->right.get(), names);
+        return;
+    }
+    if (auto* un = dynamic_cast<UnaryExpr*>(node)) {
+        collectIdentifiers(un->operand.get(), names);
+        return;
+    }
+    if (auto* call = dynamic_cast<CallExpr*>(node)) {
+        if (call->calleeExpr) collectIdentifiers(call->calleeExpr.get(), names);
+        for (auto& a : call->args) collectIdentifiers(a.get(), names);
+        return;
+    }
+    if (auto* idx = dynamic_cast<IndexExpr*>(node)) {
+        collectIdentifiers(idx->array.get(), names);
+        collectIdentifiers(idx->index.get(), names);
+        return;
+    }
+    if (auto* blk = dynamic_cast<Block*>(node)) {
+        for (auto& s : blk->statements) collectIdentifiers(s.get(), names);
+        return;
+    }
+    if (auto* vd = dynamic_cast<VarDecl*>(node)) {
+        collectIdentifiers(vd->init.get(), names);
+        return;
+    }
+    if (auto* assign = dynamic_cast<Assignment*>(node)) {
+        // The target name is also a reference
+        names.push_back(assign->target);
+        if (assign->index) collectIdentifiers(assign->index.get(), names);
+        collectIdentifiers(assign->value.get(), names);
+        return;
+    }
+    if (auto* ret = dynamic_cast<ReturnStmt*>(node)) {
+        collectIdentifiers(ret->value.get(), names);
+        return;
+    }
+    if (auto* pr = dynamic_cast<PrintStmt*>(node)) {
+        for (auto& a : pr->args) collectIdentifiers(a.get(), names);
+        return;
+    }
+    if (auto* ifs = dynamic_cast<IfStmt*>(node)) {
+        collectIdentifiers(ifs->condition.get(), names);
+        collectIdentifiers(ifs->thenBlock.get(), names);
+        collectIdentifiers(ifs->elseBlock.get(), names);
+        return;
+    }
+    if (auto* ws = dynamic_cast<WhileStmt*>(node)) {
+        collectIdentifiers(ws->condition.get(), names);
+        collectIdentifiers(ws->body.get(), names);
+        return;
+    }
+    if (auto* fs = dynamic_cast<ForStmt*>(node)) {
+        collectIdentifiers(fs->start.get(), names);
+        collectIdentifiers(fs->end.get(), names);
+        collectIdentifiers(fs->body.get(), names);
+        return;
+    }
+    if (auto* es = dynamic_cast<ExprStmt*>(node)) {
+        collectIdentifiers(es->expr.get(), names);
+        return;
+    }
+    // LambdaExpr inside a lambda — don't descend; inner lambdas handle their own captures
+    // ArrayLiteral
+    if (auto* arr = dynamic_cast<ArrayLiteral*>(node)) {
+        for (auto& e : arr->elements) collectIdentifiers(e.get(), names);
+        return;
+    }
+}
+
+/// Recursively collect all locally declared variable names in a block
+void collectLocals(Block* block, std::vector<std::string>& locals) {
+    if (!block) return;
+    for (auto& s : block->statements) {
+        if (auto* vd = dynamic_cast<VarDecl*>(s.get())) {
+            locals.push_back(vd->name);
+        }
+        if (auto* blk = dynamic_cast<Block*>(s.get())) {
+            collectLocals(blk, locals);
+        }
+        if (auto* fs = dynamic_cast<ForStmt*>(s.get())) {
+            locals.push_back(fs->varName);
+            if (auto* body = dynamic_cast<Block*>(fs->body.get())) {
+                collectLocals(body, locals);
+            }
+        }
+    }
+}
+
+} // anonymous namespace
+
+void SemanticAnalyzer::findCaptures(LambdaExpr& node) {
+    // 1. Collect all identifiers referenced in the body
+    std::vector<std::string> referenced;
+    collectIdentifiers(node.body.get(), referenced);
+
+    // 2. Collect param names and local declarations
+    std::set<std::string> localNames;
+    for (auto& p : node.params) {
+        localNames.insert(p.name);
+    }
+    std::vector<std::string> locals;
+    collectLocals(node.body.get(), locals);
+    for (auto& l : locals) {
+        localNames.insert(l);
+    }
+
+    // 3. For each referenced name, if it's not local/param and IS in the
+    //    enclosing symbol table (and is not a function), it's a capture
+    std::set<std::string> captureSet;
+    for (auto& name : referenced) {
+        if (localNames.count(name)) continue;
+        if (captureSet.count(name)) continue;
+        Symbol* sym = symbols_.lookup(name);
+        if (sym && !sym->isFunction) {
+            captureSet.insert(name);
+        }
+    }
+
+    node.captures.assign(captureSet.begin(), captureSet.end());
 }
 
 } // namespace tiny

@@ -8,6 +8,7 @@
 //   - Arithmetic, comparison, logical operators
 //   - Control flow: if/else, while, for
 //   - Functions with parameters & return types
+//   - Lambda expressions / closures (first-class functions)
 //   - Arrays (fixed-size)
 //   - Print built-in
 //   - Single-line & block comments
@@ -145,7 +146,16 @@ primary
     | 'false'
     | IDENT
     | arrayLiteral
+    | lambdaExpr                                             // fn(x: int) -> int { ... }
     | '(' expression ')'
+    ;
+
+// ── Lambda Expression ───────────────────────────────────────────────────────
+// Syntax: fn(params) -> returnType { body }
+// The 'fn' keyword without a name creates an anonymous function (closure).
+
+lambdaExpr
+    : 'fn' '(' paramList? ')' ('->' typeSpec)? block
     ;
 
 arrayLiteral
@@ -164,6 +174,11 @@ typeSpec
     | 'bool'                                                // i1
     | 'string'                                              // i8* (ptr)
     | typeSpec '[' INT_LIT ']'                               // fixed array
+    | 'fn' '(' typeList? ')' ('->' typeSpec)?                // function type
+    ;
+
+typeList
+    : typeSpec (',' typeSpec)*
     ;
 
 // ── Lexer Rules ─────────────────────────────────────────────────────────────

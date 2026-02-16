@@ -1,0 +1,42 @@
+// closures.tiny — Demonstrates closures and first-class functions
+
+// ── 1. Simple lambda stored in a variable ────────────────────────────────
+
+let double = fn(x: int) -> int { return x * 2; };
+print("double(5) = ", double(5));
+print("double(21) = ", double(21));
+
+// ── 2. Higher-order function: passing a function as an argument ──────────
+
+fn apply(f: fn(int) -> int, x: int) -> int {
+    return f(x);
+}
+
+print("apply(double, 10) = ", apply(double, 10));
+
+// ── 3. Closure capturing a variable ─────────────────────────────────────
+
+fn makeAdder(n: int) -> fn(int) -> int {
+    return fn(x: int) -> int { return x + n; };
+}
+
+let add5 = makeAdder(5);
+let add10 = makeAdder(10);
+
+print("add5(3) = ", add5(3));
+print("add10(3) = ", add10(3));
+
+// ── 4. Counter closure (mutable captured state) ─────────────────────────
+
+fn makeCounter() -> fn() -> int {
+    var count: int = 0;
+    return fn() -> int {
+        count = count + 1;
+        return count;
+    };
+}
+
+let counter = makeCounter();
+print("counter() = ", counter());
+print("counter() = ", counter());
+print("counter() = ", counter());

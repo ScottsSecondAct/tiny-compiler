@@ -20,32 +20,32 @@ tiny-compiler/
 │
 ├── generated/                              # ANTLR4 output (gitignored, built by CMake)
 │   ├── .gitkeep
-│   ├── TinyLexer.h                         # Generated lexer
-│   ├── TinyLexer.cpp
-│   ├── TinyParser.h                        # Generated parser
-│   ├── TinyParser.cpp
+│   ├── TinyLexer.h / .cpp                  # Generated lexer
+│   ├── TinyParser.h / .cpp                 # Generated parser
 │   ├── TinyVisitor.h                       # Abstract visitor interface
-│   ├── TinyBaseVisitor.h                   # Default no-op visitor to subclass
-│   └── TinyBaseVisitor.cpp
+│   └── TinyBaseVisitor.h / .cpp            # Default no-op visitor to subclass
 │
 ├── include/tiny/                           # Public headers
-│   ├── AST.h                               # ✅ AST node types, ASTVisitor, ASTBox
+│   ├── AST.h                               # ✅ AST node types, ASTVisitor, ASTBox,
+│   │                                       #    TypeKind::Function, LambdaExpr
 │   ├── ASTBuilder.h                        # ✅ ANTLR parse tree → AST converter
 │   ├── ASTPrinter.h                        # ✅ Pretty-print AST for debugging
-│   ├── SemanticAnalyzer.h                  # ✅ Type checking, symbol resolution
+│   ├── SemanticAnalyzer.h                  # ✅ Type checking, symbol resolution,
+│   │                                       #    capture analysis for closures
 │   ├── SymbolTable.h                       # ✅ Scoped symbol table
 │   ├── Diagnostics.h                       # ✅ Error/warning reporting
-│   └── CodeGen.h                           # ✅ LLVM IR generation
+│   └── CodeGen.h                           # ✅ LLVM IR generation, closure support,
+│                                           #    optimization passes
 │
 ├── src/                                    # Implementation files
 │   ├── main.cpp                            # ✅ CLI entry point & full pipeline
 │   ├── AST.cpp                             # ✅ binOpToString, etc.
-│   ├── ASTBuilder.cpp                      # ✅ Parse tree → AST visitor
+│   ├── ASTBuilder.cpp                      # ✅ Parse tree → AST visitor (incl. lambdas)
 │   ├── ASTPrinter.cpp                      # ✅ AST → indented text dump
-│   ├── SemanticAnalyzer.cpp                # ✅ Semantic passes
+│   ├── SemanticAnalyzer.cpp                # ✅ Semantic passes + capture analysis
 │   ├── SymbolTable.cpp                     # ✅ Scope push/pop, symbol lookup
 │   ├── Diagnostics.cpp                     # ✅ Source locations, error formatting
-│   └── CodeGen.cpp                         # ✅ AST → LLVM IR
+│   └── CodeGen.cpp                         # ✅ AST → LLVM IR + closures + opt passes
 │
 ├── runtime/                                # Linked runtime library for built-ins
 │   ├── CMakeLists.txt                      # Builds libtiny_runtime.a
@@ -55,46 +55,38 @@ tiny-compiler/
 ├── tests/
 │   ├── CMakeLists.txt                      # Test build config
 │   ├── unit/                               # Unit tests (GoogleTest)
-│   │   ├── test_lexer.cpp                  # Token stream verification
-│   │   ├── test_parser.cpp                 # Parse tree structure
-│   │   ├── test_ast.cpp                    # AST builder round-trip
-│   │   ├── test_semantic.cpp               # Type checking & errors
-│   │   └── test_codegen.cpp                # IR output verification
+│   │   ├── test_lexer.cpp
+│   │   ├── test_parser.cpp
+│   │   ├── test_ast.cpp
+│   │   ├── test_semantic.cpp
+│   │   └── test_codegen.cpp
 │   │
 │   └── programs/                           # End-to-end .tiny/.expected pairs
-│       ├── run_tests.py                    # Test runner script
+│       ├── run_tests.py
 │       ├── basics/
-│       │   ├── hello.tiny / .expected
-│       │   ├── variables.tiny / .expected
-│       │   └── arithmetic.tiny / .expected
 │       ├── control_flow/
-│       │   ├── if_else.tiny / .expected
-│       │   ├── while_loop.tiny / .expected
-│       │   └── for_range.tiny / .expected
 │       ├── functions/
-│       │   ├── factorial.tiny / .expected
-│       │   ├── fibonacci.tiny / .expected
-│       │   └── recursion.tiny / .expected
 │       ├── arrays/
-│       │   ├── indexing.tiny / .expected
-│       │   └── dot_product.tiny / .expected
+│       ├── closures/                       # Closure & first-class function tests
+│       │   ├── simple_lambda.tiny / .expected
+│       │   ├── higher_order.tiny / .expected
+│       │   ├── capture.tiny / .expected
+│       │   └── counter.tiny / .expected
 │       └── errors/
-│           ├── type_mismatch.tiny / .expected
-│           ├── undefined_var.tiny / .expected
-│           └── immutable_assign.tiny / .expected
 │
 ├── examples/                               # Showcase programs
 │   ├── hello.tiny
 │   ├── fizzbuzz.tiny
-│   └── fibonacci.tiny
+│   ├── fibonacci.tiny
+│   └── closures.tiny                       # Closure & first-class function demos
 │
 ├── tools/
-│   └── tiny-highlight.vim                  # Vim syntax highlighting
+│   └── tiny-highlight.vim
 │
 └── docs/
-    ├── language-spec.md                    # Informal language reference
-    ├── grammar-railroad.md                 # Railroad diagram links
-    └── llvm-patterns.md                    # Tiny construct → LLVM IR cheat sheet
+    ├── language-spec.md
+    ├── grammar-railroad.md
+    └── llvm-patterns.md
 ```
 
 **Legend:** ✅ Implemented
@@ -105,6 +97,8 @@ tiny-compiler/
                           ┌──────────────────────────────────────────┐
                           │              main.cpp                    │
                           │  CLI arg parsing, pipeline orchestration │
+                          │  Flags: --dump-ast --dump-tokens         │
+                          │         -O0/-O1/-O2/-O3 -o output.ll    │
                           └────────┬─────────────┬──────────────────┘
                                    │             │
               ┌────────────────────▼──┐   ┌──────▼───────────────────┐
@@ -118,6 +112,7 @@ tiny-compiler/
               ┌────────────────────────┐
               │   ASTBuilder           │   Phase 2 ✅
               │   (TinyBaseVisitor)    │   ANTLR parse tree → clean AST
+              │                        │   Handles lambdas, function types
               └────────────┬───────────┘
                            │
                            │ AST (unique_ptr<Program>)
@@ -131,17 +126,19 @@ tiny-compiler/
               ┌────────────────────────┐
               │   SemanticAnalyzer     │   Phase 3 ✅
               │   SymbolTable          │   Type checking, scope resolution,
-              │   Diagnostics          │   mutability enforcement
+              │   Diagnostics          │   mutability, capture analysis
               └────────────┬───────────┘
                            │
-                           │ validated AST
+                           │ validated AST (with captures)
                            ▼
               ┌────────────────────────┐
-              │   CodeGen              │   Phase 4 ✅
+              │   CodeGen              │   Phase 4 + 6 ✅
               │   (ASTVisitor)         │   AST → LLVM IR → .ll file
+              │                        │   Closures: {fn_ptr, env_ptr}
+              │                        │   Heap-allocated environments
               └────────────┬───────────┘
                            │
-                           │ output.ll
+                           │ output.ll (optionally optimized)
                            ▼
               ┌────────────────────────┐
               │   clang                │   Phase 5 ✅
@@ -154,28 +151,42 @@ tiny-compiler/
 ### Separate AST from ANTLR parse tree
 The ANTLR-generated parse tree mirrors the grammar 1:1 (every rule gets a node).
 Our AST (`include/tiny/AST.h`) is a cleaner, domain-specific tree: `BinaryExpr`,
-`IfStmt`, `FunctionDecl`, etc. This decouples later phases from the grammar and
-makes visitors simpler to write.
+`IfStmt`, `FunctionDecl`, `LambdaExpr`, etc. This decouples later phases from the
+grammar and makes visitors simpler to write.
 
 ### ASTBox wrapper for std::any
 ANTLR visitors return `std::any`, but `std::any` requires copy-constructible
 types. `unique_ptr` is move-only. `ASTBox` solves this by wrapping the
 `unique_ptr` inside a `shared_ptr<Holder>`, allowing `std::any` to copy the
-box while the underlying node stays uniquely owned. The `boxNode()` and
-`unboxNode()` helpers keep this transparent.
+box while the underlying node stays uniquely owned.
 
 ### Visitor pattern across all phases
 Every compiler phase implements `ASTVisitor`:
 - `ASTPrinter` — debugging
-- `SemanticAnalyzer` — validation
+- `SemanticAnalyzer` — validation & capture analysis
 - `CodeGen` — LLVM IR emission
 
-Adding a new pass (optimization, linting, formatting) = writing one new class.
+Adding a new pass = writing one new class.
+
+### Closure representation
+Closures are a `{ i8* fn_ptr, i8* env_ptr }` struct. The function is an internal
+LLVM function with an extra `i8* env` first parameter. The environment is a
+heap-allocated struct (`malloc`) containing copies of captured variable values.
+At the call site, the fn pointer and env pointer are extracted from the struct
+and the call is dispatched indirectly. This is the same pattern used by Swift
+and Rust compilers.
+
+### Capture analysis in the semantic analyzer
+The `findCaptures` method walks the lambda body to collect all `Identifier`
+references, subtracts parameter names and locally-declared variables, then
+checks each remaining name against the enclosing symbol table. Only non-function
+symbols are captured (functions are resolved directly by name at the LLVM level).
 
 ### Runtime library
 Built-in operations (`print`, string ops, bounds checks) are implemented in
 C++ in `runtime/` and linked at compile time. The codegen declares them as
-`extern` and calls them — simpler than emitting inline LLVM IR for each.
+`extern` and calls them. `malloc` and `free` are also declared for closure
+environments.
 
 ### End-to-end test pairs
 Each test is a `.tiny` source + `.expected` output file. The runner compiles,
@@ -189,15 +200,18 @@ mkdir build && cd build
 cmake .. && make -j$(nproc)
 
 # Compile a Tiny program
-./tinyc ../examples/hello.tiny -o output.ll
+./tinyc ../examples/closures.tiny -o output.ll
+
+# With optimizations
+./tinyc ../examples/closures.tiny -o output.ll -O2
 
 # Link with runtime and run
-clang output.ll ../runtime/runtime.cpp -o hello -no-pie
-./hello
+clang output.ll ../runtime/runtime.cpp -o closures -no-pie
+./closures
 
 # Debug flags
-./tinyc ../examples/hello.tiny --dump-ast      # Print AST
-./tinyc ../examples/hello.tiny --dump-tokens   # Print tokens
+./tinyc ../examples/closures.tiny --dump-ast
+./tinyc ../examples/closures.tiny --dump-tokens
 
 # Test
 python3 ../tests/programs/run_tests.py --compiler ./tinyc

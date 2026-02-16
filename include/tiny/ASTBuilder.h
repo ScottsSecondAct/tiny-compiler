@@ -49,6 +49,7 @@ private:
     std::any visitUnary(TinyParser::UnaryContext* ctx) override;
     std::any visitPostfix(TinyParser::PostfixContext* ctx) override;
     std::any visitPrimary(TinyParser::PrimaryContext* ctx) override;
+    std::any visitLambdaExpr(TinyParser::LambdaExprContext* ctx) override;
     std::any visitArrayLiteral(TinyParser::ArrayLiteralContext* ctx) override;
     std::any visitExpressionList(TinyParser::ExpressionListContext* ctx) override;
 };

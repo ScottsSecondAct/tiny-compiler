@@ -73,7 +73,14 @@ std::any ASTPrinter::visit(UnaryExpr& node) {
 }
 
 std::any ASTPrinter::visit(CallExpr& node) {
-    indented("CallExpr(" + node.callee + ")", [&] {
+    std::string label = node.callee.empty() ? "CallExpr(<expr>)" : "CallExpr(" + node.callee + ")";
+    indented(label, [&] {
+        if (node.calleeExpr) {
+            printIndent(); out_ << "callee:\n";
+            indent_++;
+            node.calleeExpr->accept(*this);
+            indent_--;
+        }
         for (auto& arg : node.args) {
             arg->accept(*this);
         }
@@ -88,6 +95,27 @@ std::any ASTPrinter::visit(IndexExpr& node) {
         indent_++;
         node.index->accept(*this);
         indent_--;
+    });
+    return {};
+}
+
+std::any ASTPrinter::visit(LambdaExpr& node) {
+    std::string sig = "LambdaExpr(fn(";
+    for (size_t i = 0; i < node.params.size(); i++) {
+        if (i > 0) sig += ", ";
+        sig += node.params[i].name + ": " + node.params[i].type.toString();
+    }
+    sig += ") -> " + node.returnType.toString() + ")";
+    if (!node.captures.empty()) {
+        sig += " captures[";
+        for (size_t i = 0; i < node.captures.size(); i++) {
+            if (i > 0) sig += ", ";
+            sig += node.captures[i];
+        }
+        sig += "]";
+    }
+    indented(sig, [&] {
+        node.body->accept(*this);
     });
     return {};
 }

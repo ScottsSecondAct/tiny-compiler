@@ -24,6 +24,7 @@ public:
     std::any visit(UnaryExpr& node) override;
     std::any visit(CallExpr& node) override;
     std::any visit(IndexExpr& node) override;
+    std::any visit(LambdaExpr& node) override;
 
     // Statements
     std::any visit(VarDecl& node) override;
