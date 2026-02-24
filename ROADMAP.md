@@ -19,6 +19,7 @@ ANTLR4 → C++ → LLVM IR pipeline without drowning in complexity.
 | Lambdas / closures | Closure structs, `malloc`, indirect calls |
 | First-class functions | Function types, higher-order functions |
 | Optimization | LLVM `PassBuilder` pipeline (`-O1` / `-O2` / `-O3`) |
+| Debug info | `DIBuilder` — `DICompileUnit`, `DISubprogram`, `DILocalVariable`, DWARF |
 
 ## Build Pipeline
 
@@ -139,6 +140,45 @@ print(add5(3));  // 8
 | Indirect `CreateCall` | Calling through a function pointer |
 | `InternalLinkage` | Lambda functions are module-private |
 
+### Phase 7 — LLVM Debug Info ✅
+
+**Milestone:** Step through `.tiny` source in GDB/LLDB — breakpoints at Tiny function names, source-line stepping, local variable inspection. ✅
+
+```bash
+./build/tinyc examples/fibonacci.tiny -o fib.ll
+clang fib.ll runtime/runtime.cpp -o fib -no-pie
+gdb fib
+# (gdb) b fib_rec  →  Breakpoint 1 at fibonacci.tiny:3
+# (gdb) run        →  fib_rec (n=10) at fibonacci.tiny:4
+# (gdb) list       →  shows .tiny source
+```
+
+**What was built:**
+
+- `CodeGen` constructor accepts optional `sourceFile` path and initializes `llvm::DIBuilder`, `DIFile`, and `DICompileUnit` (`DW_LANG_C`)
+- Module flags for `Debug Info Version` and `Dwarf Version 4`
+- `createDISubprogram` — builds `DISubroutineType` and `DISubprogram` for each function and lambda
+- `toDIType` — maps `TypeSpec` → `DIBasicType` (i64/double/bool/pointer)
+- `setDebugLoc` — attaches `DILocation` to subsequent instructions via `IRBuilder::SetCurrentDebugLocation`
+- `pushDIScope` / `popDIScope` / `currentDIScope` — scope stack tracking `DISubprogram` and `DILexicalBlock` frames
+- `visit(FunctionDecl)` — attaches `DISubprogram`, emits `createParameterVariable` + `insertDeclare` for each param
+- `visit(VarDecl)` — emits `createAutoVariable` + `insertDeclare`
+- `visit(Block)` — creates `DILexicalBlock` when source location is available
+- All statement visitors — call `setDebugLoc()` at entry
+- `visit(LambdaExpr)` — creates `DISubprogram` for lambda, saves/restores the full DI scope stack across the lambda body
+- `dib_->finalize()` called in `generate()` before `verifyModule()`
+
+| LLVM debug concept | Where it's used |
+|---|---|
+| `DICompileUnit` | Module-level, links file + producer metadata |
+| `DISubprogram` | Each named function and each lambda |
+| `DILexicalBlock` | Explicit `{ }` blocks (if/while/for bodies) |
+| `DILocalVariable` | Parameters (`arg`) and auto variables |
+| `insertDeclare` | Connects alloca to variable metadata |
+| `DILocation` | Per-instruction source line/column |
+
+**Key implementation detail:** `IRBuilder::SetCurrentDebugLocation` persists across `SetInsertPoint`. Without explicitly clearing it when entering a new function, the first instructions of the function inherit a stale `DILocation` from the previous function's scope, causing LLVM's module verifier to reject it with "!dbg attachment points at wrong subprogram". The fix is `builder_.SetCurrentDebugLocation(llvm::DebugLoc())` at function entry.
+
 ## What's Next
 
 ### Possible Extensions
@@ -150,4 +190,3 @@ print(add5(3));  // 8
 - **Modules / imports** → multiple LLVM modules + linking
 - **String operations** → concatenation, length, slicing via runtime library
 - **Error recovery** → continue parsing after errors to report multiple issues
-- **Source maps** → LLVM debug info for GDB/LLDB stepping through `.tiny` files

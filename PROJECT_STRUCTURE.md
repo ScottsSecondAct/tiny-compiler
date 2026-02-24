@@ -35,7 +35,7 @@ tiny-compiler/
 │   ├── SymbolTable.h                       # ✅ Scoped symbol table
 │   ├── Diagnostics.h                       # ✅ Error/warning reporting
 │   └── CodeGen.h                           # ✅ LLVM IR generation, closure support,
-│                                           #    optimization passes
+│                                           #    optimization passes, DIBuilder debug info
 │
 ├── src/                                    # Implementation files
 │   ├── main.cpp                            # ✅ CLI entry point & full pipeline
@@ -46,6 +46,7 @@ tiny-compiler/
 │   ├── SymbolTable.cpp                     # ✅ Scope push/pop, symbol lookup
 │   ├── Diagnostics.cpp                     # ✅ Source locations, error formatting
 │   └── CodeGen.cpp                         # ✅ AST → LLVM IR + closures + opt passes
+│                                           #    + DWARF debug info via DIBuilder
 │
 ├── runtime/                                # Linked runtime library for built-ins
 │   ├── CMakeLists.txt                      # Builds libtiny_runtime.a
@@ -132,10 +133,11 @@ tiny-compiler/
                            │ validated AST (with captures)
                            ▼
               ┌────────────────────────┐
-              │   CodeGen              │   Phase 4 + 6 ✅
+              │   CodeGen              │   Phase 4 + 6 + 7 ✅
               │   (ASTVisitor)         │   AST → LLVM IR → .ll file
               │                        │   Closures: {fn_ptr, env_ptr}
               │                        │   Heap-allocated environments
+              │                        │   DWARF debug info (DIBuilder)
               └────────────┬───────────┘
                            │
                            │ output.ll (optionally optimized)
@@ -187,6 +189,9 @@ Built-in operations (`print`, string ops, bounds checks) are implemented in
 C++ in `runtime/` and linked at compile time. The codegen declares them as
 `extern` and calls them. `malloc` and `free` are also declared for closure
 environments.
+
+### LLVM debug info (DIBuilder)
+Source-level debugging is emitted unconditionally whenever the compiler knows the source file path. `DIBuilder` is initialized in the `CodeGen` constructor and finalized before module verification. Each function gets a `DISubprogram` (attached via `setSubprogram`), each local variable a `DILocalVariable` (inserted with `insertDeclare`), and each block a `DILexicalBlock`. A `diScopeStack_` mirrors the IR scope stack, pushed/popped by function and block visitors. Lambdas save and restore the entire scope stack since their LLVM functions are generated out-of-order. The debug location (`IRBuilder::SetCurrentDebugLocation`) must be explicitly cleared at every function entry to prevent stale locations from a previous function bleeding into the new one — LLVM's verifier rejects any instruction whose `DILocation` scope doesn't belong to the enclosing function's `DISubprogram`.
 
 ### End-to-end test pairs
 Each test is a `.tiny` source + `.expected` output file. The runner compiles,

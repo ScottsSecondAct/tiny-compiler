@@ -1,6 +1,8 @@
 #include "tiny/CodeGen.h"
 
 #include <llvm/IR/Verifier.h>
+#include <llvm/IR/DIBuilder.h>
+#include <llvm/BinaryFormat/Dwarf.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Passes/PassBuilder.h>
@@ -12,9 +14,23 @@ namespace tiny {
 
 // ── Construction ────────────────────────────────────────────────────────────
 
-CodeGen::CodeGen(Diagnostics& diags)
-    : diags_(diags), builder_(context_) {
+CodeGen::CodeGen(Diagnostics& diags, const std::string& sourceFile)
+    : diags_(diags), builder_(context_), sourceFile_(sourceFile) {
     module_ = std::make_unique<llvm::Module>("tiny_module", context_);
+
+    if (!sourceFile.empty()) {
+        module_->addModuleFlag(llvm::Module::Warning, "Debug Info Version",
+                               llvm::DEBUG_METADATA_VERSION);
+        module_->addModuleFlag(llvm::Module::Warning, "Dwarf Version", 4);
+        dib_ = std::make_unique<llvm::DIBuilder>(*module_);
+
+        auto slash = sourceFile.find_last_of("/\\");
+        std::string dir  = (slash == std::string::npos) ? "." : sourceFile.substr(0, slash);
+        std::string file = (slash == std::string::npos) ? sourceFile : sourceFile.substr(slash + 1);
+        diFile_ = dib_->createFile(file, dir);
+        diCU_   = dib_->createCompileUnit(
+            llvm::dwarf::DW_LANG_C, diFile_, "tinyc", /*isOptimized=*/false, "", 0);
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -79,6 +95,57 @@ CodeGen::VarInfo* CodeGen::lookupVar(const std::string& name) {
         }
     }
     return nullptr;
+}
+
+// ── Debug info helpers ───────────────────────────────────────────────────────
+
+llvm::DIType* CodeGen::toDIType(const TypeSpec& type) {
+    if (!dib_) return nullptr;
+    switch (type.kind) {
+        case TypeKind::Int:    return dib_->createBasicType("int",    64, llvm::dwarf::DW_ATE_signed);
+        case TypeKind::Float:  return dib_->createBasicType("float",  64, llvm::dwarf::DW_ATE_float);
+        case TypeKind::Bool:   return dib_->createBasicType("bool",   1,  llvm::dwarf::DW_ATE_boolean);
+        case TypeKind::String: return dib_->createBasicType("string", 64, llvm::dwarf::DW_ATE_address);
+        default:               return dib_->createBasicType("void",   0,  llvm::dwarf::DW_ATE_unsigned);
+    }
+}
+
+void CodeGen::setDebugLoc(const SourceLoc& loc) {
+    if (!dib_ || diScopeStack_.empty() || loc.line == 0) return;
+    builder_.SetCurrentDebugLocation(
+        llvm::DILocation::get(context_, loc.line, loc.col, currentDIScope()));
+}
+
+void CodeGen::pushDIScope(llvm::DIScope* scope) {
+    diScopeStack_.push_back(scope);
+}
+
+void CodeGen::popDIScope() {
+    if (!diScopeStack_.empty()) diScopeStack_.pop_back();
+}
+
+llvm::DIScope* CodeGen::currentDIScope() {
+    if (diScopeStack_.empty()) return diFile_;
+    return diScopeStack_.back();
+}
+
+llvm::DISubprogram* CodeGen::createDISubprogram(const std::string& name,
+                                                  const std::vector<Param>& params,
+                                                  const TypeSpec& returnType, int line) {
+    if (!dib_) return nullptr;
+
+    std::vector<llvm::Metadata*> paramDITypes;
+    paramDITypes.push_back(toDIType(returnType));
+    for (auto& p : params) {
+        paramDITypes.push_back(toDIType(p.type));
+    }
+    auto* subTy = dib_->createSubroutineType(dib_->getOrCreateTypeArray(paramDITypes));
+
+    return dib_->createFunction(
+        diFile_, name, name, diFile_, line,
+        subTy, line,
+        llvm::DINode::FlagPrototyped,
+        llvm::DISubprogram::SPFlagDefinition);
 }
 
 // ── Runtime function declarations ───────────────────────────────────────────
@@ -227,6 +294,9 @@ bool CodeGen::generate(Program& program, const std::string& outputFile,
                         OptLevel optLevel) {
     program.accept(*this);
 
+    // Finalize debug info before verification
+    if (dib_) dib_->finalize();
+
     // Verify the module
     std::string verifyError;
     llvm::raw_string_ostream verifyStream(verifyError);
@@ -297,6 +367,15 @@ std::any CodeGen::visit(Program& node) {
             mainTy, llvm::Function::ExternalLinkage, "main", module_.get());
         functions_["main"] = mainFunc;
 
+        // Debug info for implicit main
+        if (dib_) {
+            int mainLine = (!topLevelStmts.empty() && topLevelStmts[0]->loc.line > 0)
+                           ? topLevelStmts[0]->loc.line : 1;
+            auto* mainSP = createDISubprogram("main", {}, TypeSpec::makeInt(), mainLine);
+            mainFunc->setSubprogram(mainSP);
+            pushDIScope(mainSP);
+        }
+
         auto* entry = llvm::BasicBlock::Create(context_, "entry", mainFunc);
         builder_.SetInsertPoint(entry);
 
@@ -313,6 +392,7 @@ std::any CodeGen::visit(Program& node) {
         }
 
         popScope();
+        if (dib_) popDIScope();
     }
 
     // Second pass: generate function bodies
@@ -340,8 +420,19 @@ std::any CodeGen::visit(FunctionDecl& node) {
     auto* func = functions_[node.name];
     if (!func) return {};
 
+    // Debug info: create subprogram and attach to function
+    llvm::DISubprogram* diSP = nullptr;
+    if (dib_) {
+        int line = node.loc.line > 0 ? node.loc.line : 1;
+        diSP = createDISubprogram(node.name, node.params, node.returnType, line);
+        func->setSubprogram(diSP);
+        pushDIScope(diSP);
+    }
+
     auto* entry = llvm::BasicBlock::Create(context_, "entry", func);
     builder_.SetInsertPoint(entry);
+    // Clear any stale debug location from previous code generation
+    if (dib_) builder_.SetCurrentDebugLocation(llvm::DebugLoc());
 
     pushScope();
 
@@ -353,8 +444,21 @@ std::any CodeGen::visit(FunctionDecl& node) {
         builder_.CreateStore(&arg, alloca);
         declareVar(param.name, alloca, param.type);
         arg.setName(param.name);
+
+        // Debug info: describe each parameter
+        if (dib_ && diSP) {
+            int line = node.loc.line > 0 ? node.loc.line : 1;
+            auto* diParam = dib_->createParameterVariable(
+                diSP, param.name, idx + 1, diFile_, line, toDIType(param.type));
+            dib_->insertDeclare(alloca, diParam, dib_->createExpression(),
+                llvm::DILocation::get(context_, line, 0, diSP),
+                builder_.GetInsertBlock());
+        }
+
         idx++;
     }
+
+    if (dib_) setDebugLoc(node.loc);
 
     // Generate the function body
     for (auto& stmt : node.body->statements) {
@@ -382,15 +486,27 @@ std::any CodeGen::visit(FunctionDecl& node) {
     }
 
     popScope();
+    if (dib_) popDIScope();
     return {};
 }
 
 // ── Statements ──────────────────────────────────────────────────────────────
 
 std::any CodeGen::visit(VarDecl& node) {
+    setDebugLoc(node.loc);
+
     auto* func = builder_.GetInsertBlock()->getParent();
     auto* llvmType = toLLVMType(node.type);
     auto* alloca = createEntryBlockAlloca(func, node.name, llvmType);
+
+    // Debug info: describe local variable
+    if (dib_ && !diScopeStack_.empty() && node.loc.line > 0) {
+        auto* diVar = dib_->createAutoVariable(
+            currentDIScope(), node.name, diFile_, node.loc.line, toDIType(node.type));
+        dib_->insertDeclare(alloca, diVar, dib_->createExpression(),
+            llvm::DILocation::get(context_, node.loc.line, node.loc.col, currentDIScope()),
+            builder_.GetInsertBlock());
+    }
 
     // Special case: array literal initialization
     if (auto* arrLit = dynamic_cast<ArrayLiteral*>(node.init.get())) {
@@ -418,6 +534,7 @@ std::any CodeGen::visit(VarDecl& node) {
 }
 
 std::any CodeGen::visit(Assignment& node) {
+    setDebugLoc(node.loc);
     auto* var = lookupVar(node.target);
     if (!var) return {};
 
@@ -446,6 +563,7 @@ std::any CodeGen::visit(Assignment& node) {
 }
 
 std::any CodeGen::visit(ReturnStmt& node) {
+    setDebugLoc(node.loc);
     if (node.value) {
         auto valResult = node.value->accept(*this);
         auto* val = getValue(valResult);
@@ -459,6 +577,7 @@ std::any CodeGen::visit(ReturnStmt& node) {
 }
 
 std::any CodeGen::visit(PrintStmt& node) {
+    setDebugLoc(node.loc);
     for (auto& arg : node.args) {
         TypeSpec argType = inferExprType(*arg);
         auto result = arg->accept(*this);
@@ -478,6 +597,7 @@ std::any CodeGen::visit(PrintStmt& node) {
 }
 
 std::any CodeGen::visit(IfStmt& node) {
+    setDebugLoc(node.loc);
     auto condResult = node.condition->accept(*this);
     auto* condVal = getValue(condResult);
     if (!condVal) return {};
@@ -515,6 +635,7 @@ std::any CodeGen::visit(IfStmt& node) {
 }
 
 std::any CodeGen::visit(WhileStmt& node) {
+    setDebugLoc(node.loc);
     auto* func = builder_.GetInsertBlock()->getParent();
 
     auto* headerBB = llvm::BasicBlock::Create(context_, "while.header", func);
@@ -542,6 +663,7 @@ std::any CodeGen::visit(WhileStmt& node) {
 }
 
 std::any CodeGen::visit(ForStmt& node) {
+    setDebugLoc(node.loc);
     auto* func = builder_.GetInsertBlock()->getParent();
 
     // Evaluate range bounds
@@ -590,17 +712,28 @@ std::any CodeGen::visit(ForStmt& node) {
 }
 
 std::any CodeGen::visit(ExprStmt& node) {
+    setDebugLoc(node.loc);
     node.expr->accept(*this);
     return {};
 }
 
 std::any CodeGen::visit(Block& node) {
+    bool pushedDIScope = false;
+    if (dib_ && !diScopeStack_.empty() && node.loc.line > 0) {
+        auto* lexBlock = dib_->createLexicalBlock(
+            currentDIScope(), diFile_, node.loc.line, node.loc.col);
+        pushDIScope(lexBlock);
+        pushedDIScope = true;
+    }
+
     pushScope();
     for (auto& stmt : node.statements) {
         stmt->accept(*this);
         if (builder_.GetInsertBlock()->getTerminator()) break;
     }
     popScope();
+
+    if (pushedDIScope) popDIScope();
     return {};
 }
 
@@ -895,6 +1028,14 @@ std::any CodeGen::visit(LambdaExpr& node) {
     auto* fn = llvm::Function::Create(
         fnTy, llvm::Function::InternalLinkage, fnName, module_.get());
 
+    // Debug info: create subprogram for lambda
+    llvm::DISubprogram* lambdaSP = nullptr;
+    if (dib_) {
+        int line = node.loc.line > 0 ? node.loc.line : 1;
+        lambdaSP = createDISubprogram(fnName, node.params, node.returnType, line);
+        fn->setSubprogram(lambdaSP);
+    }
+
     // 3. Build the environment struct type from captures
     //    env = { type_of_capture_0, type_of_capture_1, ... }
     std::vector<llvm::Type*> envFieldTypes;
@@ -943,12 +1084,20 @@ std::any CodeGen::visit(LambdaExpr& node) {
     }
 
     // 5. Generate the lambda function body
-    //    Save and restore the current insert point
+    //    Save and restore the current insert point and DI scope stack
     auto* savedBlock = builder_.GetInsertBlock();
     auto savedPoint = builder_.GetInsertPoint();
+    auto savedDIStack = diScopeStack_;
+
+    if (lambdaSP) {
+        diScopeStack_.clear();
+        pushDIScope(lambdaSP);
+    }
 
     auto* entry = llvm::BasicBlock::Create(context_, "entry", fn);
     builder_.SetInsertPoint(entry);
+    // Clear any stale debug location
+    if (dib_) builder_.SetCurrentDebugLocation(llvm::DebugLoc());
 
     pushScope();
 
@@ -1003,8 +1152,11 @@ std::any CodeGen::visit(LambdaExpr& node) {
 
     popScope();
 
-    // 6. Restore the caller's insert point
+    // 6. Restore the caller's insert point and DI scope stack
     builder_.SetInsertPoint(savedBlock, savedPoint);
+    diScopeStack_ = savedDIStack;
+    // Clear stale debug location from the lambda body so outer code isn't tainted
+    if (dib_) builder_.SetCurrentDebugLocation(llvm::DebugLoc());
 
     // 7. Build the closure struct: { fn_ptr, env_ptr }
     auto* closureTy = getClosureType();

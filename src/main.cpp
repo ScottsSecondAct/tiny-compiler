@@ -105,7 +105,7 @@ int main(int argc, char* argv[]) {
     }
 
     // ── Phase 4: Code Generation ────────────────────────────────────────
-    tiny::CodeGen codegen(diags);
+    tiny::CodeGen codegen(diags, inputFile);
     if (!codegen.generate(*ast, outputFile, optLevel)) {
         diags.dump(std::cerr);
         return 1;

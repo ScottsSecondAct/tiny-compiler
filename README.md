@@ -130,6 +130,23 @@ The code generator maps Tiny constructs to LLVM IR using the C++ API:
 | `fn(x) { x + 1 }` | Internal function + `malloc` env + closure struct |
 | `f(args)` | Extract fn/env from closure, indirect call |
 | `-O2` | LLVM `PassBuilder` optimization pipeline |
+| Source locations | `DIBuilder` — `DICompileUnit`, `DISubprogram`, `DILocalVariable`, `DILocation` |
+
+### Source-Level Debugging (LLVM DIBuilder)
+The compiler emits full DWARF debug information via LLVM's `DIBuilder` API, so compiled programs can be stepped through in GDB or LLDB at the `.tiny` source level — not just at the machine-code level. Every function gets a `DISubprogram`, every local variable a `DILocalVariable` with `insertDeclare`, every block a `DILexicalBlock`, and every statement a `DILocation`. The `CodeGen` constructor accepts the source file path and wires it into a `DICompileUnit` with `DW_LANG_C`. A critical subtlety: LLVM's `IRBuilder` retains the current debug location across `SetInsertPoint`, so the implementation explicitly clears it when entering each new function to prevent scope bleed.
+
+```bash
+# Compile with debug info (default — no extra flag needed)
+./tinyc examples/fibonacci.tiny -o fib.ll
+clang fib.ll runtime/runtime.cpp -o fib -no-pie
+
+# Step through .tiny source in GDB
+gdb fib
+(gdb) b fib_rec
+(gdb) run
+# Breakpoint 1, fib_rec (n=0) at fibonacci.tiny:4
+(gdb) list
+```
 
 ### Testing Strategy
 End-to-end tests use `.tiny` / `.expected` file pairs — the test runner compiles each program, executes the binary, and diffs stdout against expected output. Error tests verify that invalid programs produce correct diagnostics. Unit tests cover individual components with GoogleTest.
@@ -197,7 +214,7 @@ This mirrors professional software development, where engineers routinely use to
 
 - **Systems programming**: C++17 with move semantics, smart pointers, CRTP, virtual dispatch, and template metaprogramming
 - **Compiler engineering**: Lexing, parsing, AST design, type systems, scope resolution, capture analysis, code generation
-- **LLVM**: IR generation via the C++ API — basic blocks, alloca/load/store, GEP, function definitions, external linkage, closure structs, indirect calls, optimization passes
+- **LLVM**: IR generation via the C++ API — basic blocks, alloca/load/store, GEP, function definitions, external linkage, closure structs, indirect calls, optimization passes, `DIBuilder` for DWARF debug info
 - **Build systems**: CMake with custom targets, external tool integration, multi-library linking
 - **Software architecture**: Clean separation of concerns, visitor pattern, test-driven development
 - **Tool proficiency**: ANTLR4, LLVM, GDB, VS Code + WSL, Git
@@ -215,10 +232,10 @@ This mirrors professional software development, where engineers routinely use to
 - [x] End-to-end compilation to native executables
 - [x] Optimization passes via LLVM PassManager (`-O1` / `-O2` / `-O3`)
 - [x] Closures and first-class functions (lambda expressions, capture analysis, heap-allocated environments)
+- [x] LLVM debug info — DWARF via `DIBuilder`, GDB/LLDB source-level stepping through `.tiny` files
 - [ ] End-to-end test suite execution
 - [ ] Capture-by-reference for mutable closures
 - [ ] String operations (concatenation, length)
-- [ ] LLVM debug info for source-level debugging
 
 ## License
 

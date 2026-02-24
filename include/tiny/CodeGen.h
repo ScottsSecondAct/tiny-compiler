@@ -7,9 +7,11 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Value.h>
+#include <llvm/IR/DIBuilder.h>
 
 #include <map>
 #include <string>
+#include <vector>
 
 namespace tiny {
 
@@ -29,7 +31,7 @@ enum class OptLevel {
 ///   codegen.generate(program, "output.ll", OptLevel::O2);
 class CodeGen : public ASTVisitor {
 public:
-    explicit CodeGen(Diagnostics& diags);
+    explicit CodeGen(Diagnostics& diags, const std::string& sourceFile = "");
 
     /// Main entry point: generate IR, optionally optimize, and write to file
     bool generate(Program& program, const std::string& outputFile,
@@ -65,6 +67,7 @@ public:
 
 private:
     Diagnostics& diags_;
+    std::string sourceFile_;
 
     llvm::LLVMContext context_;
     llvm::IRBuilder<> builder_;
@@ -110,6 +113,22 @@ private:
 
     /// Run LLVM optimization passes on the module
     void runOptimizations(OptLevel level);
+
+    // ── Debug info ──────────────────────────────────────────────────────
+
+    std::unique_ptr<llvm::DIBuilder> dib_;
+    llvm::DICompileUnit* diCU_   = nullptr;
+    llvm::DIFile*        diFile_ = nullptr;
+    std::vector<llvm::DIScope*> diScopeStack_;
+
+    llvm::DIType*       toDIType(const TypeSpec& type);
+    void                setDebugLoc(const SourceLoc& loc);
+    void                pushDIScope(llvm::DIScope* scope);
+    void                popDIScope();
+    llvm::DIScope*      currentDIScope();
+    llvm::DISubprogram* createDISubprogram(const std::string& name,
+                            const std::vector<Param>& params,
+                            const TypeSpec& returnType, int line);
 
     // ── Closure support ─────────────────────────────────────────────────
 
