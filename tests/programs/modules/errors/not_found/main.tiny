@@ -1,0 +1,2 @@
+import "nonexistent.tiny";
+print(42);

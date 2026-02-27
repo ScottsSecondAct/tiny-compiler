@@ -1,0 +1,3 @@
+Error: return type mismatch: cannot use 'string' where 'int' is expected (line 1)
+
+1 error(s)

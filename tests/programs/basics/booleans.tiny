@@ -1,0 +1,8 @@
+let a: bool = true;
+let b: bool = false;
+print(a && b);
+print(a || b);
+print(!a);
+print(!b);
+print(a == b);
+print(a != b);

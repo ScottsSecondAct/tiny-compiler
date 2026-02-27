@@ -1,0 +1,4 @@
+import "math.tiny";
+
+print(square(4));
+print(square(7));

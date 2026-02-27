@@ -1,0 +1,14 @@
+fn apply(f: fn(int) -> int, x: int) -> int {
+    return f(x);
+}
+
+let triple = fn(x: int) -> int { return x * 3; };
+
+print(apply(triple, 4));
+print(apply(triple, 10));
+
+fn applyTwice(f: fn(int) -> int, x: int) -> int {
+    return f(f(x));
+}
+
+print(applyTwice(triple, 2));

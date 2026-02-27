@@ -59,6 +59,7 @@ add_executable(tinyc
     src/AST.cpp
     src/ASTBuilder.cpp
     src/ASTPrinter.cpp
+    src/ModuleLoader.cpp
     src/SemanticAnalyzer.cpp
     src/SymbolTable.cpp
     src/TypeSystem.cpp

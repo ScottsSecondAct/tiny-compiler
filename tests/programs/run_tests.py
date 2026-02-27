@@ -26,7 +26,6 @@ def run_test(compiler: str, runtime: str, tiny_path: Path, expected_path: Path) 
 
     with tempfile.TemporaryDirectory() as tmp:
         ll_file = os.path.join(tmp, "output.ll")
-        obj_file = os.path.join(tmp, "output.o")
         exe_file = os.path.join(tmp, "program")
 
         # Step 1: Compile .tiny → .ll
@@ -50,11 +49,9 @@ def run_test(compiler: str, runtime: str, tiny_path: Path, expected_path: Path) 
             print(f"        {result.stderr.strip()}")
             return False
 
-        # Step 2: .ll → .o → executable
-        subprocess.run(["llc", "-filetype=obj", ll_file, "-o", obj_file],
-                       check=True, capture_output=True, timeout=10)
-        subprocess.run(["clang", obj_file, runtime, "-o", exe_file],
-                       check=True, capture_output=True, timeout=10)
+        # Step 2: .ll → executable
+        subprocess.run(["clang", ll_file, runtime, "-o", exe_file, "-no-pie"],
+                       check=True, capture_output=True, timeout=30)
 
         # Step 3: Run and compare
         result = subprocess.run([exe_file], capture_output=True, text=True, timeout=10)

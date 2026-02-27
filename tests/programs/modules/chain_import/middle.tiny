@@ -1,0 +1,5 @@
+import "base.tiny";
+
+fn add_two(x: int) -> int {
+    return increment(increment(x));
+}

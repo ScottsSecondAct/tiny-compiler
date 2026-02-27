@@ -1,0 +1,2 @@
+fn getValue() -> int { return "hello"; }
+print(getValue());

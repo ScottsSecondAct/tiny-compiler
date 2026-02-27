@@ -1,0 +1,6 @@
+import "math.tiny";
+import "utils.tiny";
+
+print(cube(3));
+print(clamp(10, 0, 5));
+print(clamp(3, 0, 5));

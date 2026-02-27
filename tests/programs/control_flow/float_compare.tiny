@@ -1,0 +1,10 @@
+let a: float = 1.5;
+let b: float = 2.5;
+let c: float = 1.5;
+
+if (a < b)  { print(1); } else { print(0); }
+if (a > b)  { print(1); } else { print(0); }
+if (a == c) { print(1); } else { print(0); }
+if (a != b) { print(1); } else { print(0); }
+if (a <= c) { print(1); } else { print(0); }
+if (b >= a) { print(1); } else { print(0); }

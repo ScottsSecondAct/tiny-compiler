@@ -30,6 +30,7 @@ tiny-compiler/
 │   │                                       #    TypeKind::Function, LambdaExpr
 │   ├── ASTBuilder.h                        # ✅ ANTLR parse tree → AST converter
 │   ├── ASTPrinter.h                        # ✅ Pretty-print AST for debugging
+│   ├── ModuleLoader.h                      # ✅ AST-level import resolution
 │   ├── SemanticAnalyzer.h                  # ✅ Type checking, symbol resolution,
 │   │                                       #    capture analysis for closures
 │   ├── SymbolTable.h                       # ✅ Scoped symbol table
@@ -42,6 +43,8 @@ tiny-compiler/
 │   ├── AST.cpp                             # ✅ binOpToString, etc.
 │   ├── ASTBuilder.cpp                      # ✅ Parse tree → AST visitor (incl. lambdas)
 │   ├── ASTPrinter.cpp                      # ✅ AST → indented text dump
+│   ├── ModuleLoader.cpp                    # ✅ Recursive import resolution,
+│   │                                       #    dedup, circular detection
 │   ├── SemanticAnalyzer.cpp                # ✅ Semantic passes + capture analysis
 │   ├── SymbolTable.cpp                     # ✅ Scope push/pop, symbol lookup
 │   ├── Diagnostics.cpp                     # ✅ Source locations, error formatting
@@ -71,8 +74,15 @@ tiny-compiler/
 │       ├── closures/                       # Closure & first-class function tests
 │       │   ├── simple_lambda.tiny / .expected
 │       │   ├── higher_order.tiny / .expected
-│       │   ├── capture.tiny / .expected
-│       │   └── counter.tiny / .expected
+│       │   └── capture.tiny / .expected
+│       ├── modules/                        # ✅ Module/import tests
+│       │   ├── basic_import/               # Single import, one function
+│       │   ├── multi_import/               # Multiple imports in one file
+│       │   ├── chain_import/               # Transitive imports (a→b→c)
+│       │   ├── dedup_import/               # Same module imported twice → no duplicate defs
+│       │   └── errors/
+│       │       ├── not_found/              # Import of nonexistent file
+│       │       └── circular/              # Circular import detection
 │       └── errors/
 │
 ├── examples/                               # Showcase programs
@@ -123,6 +133,17 @@ tiny-compiler/
               │   (ASTVisitor)         │   Prints indented AST and exits
               └────────────┬───────────┘
                            │
+                           ▼
+              ┌────────────────────────┐
+              │   ModuleLoader         │   Phase 2.5 ✅
+              │                        │   Resolves import declarations:
+              │                        │   parses imported files, extracts
+              │                        │   FunctionDecls, prepends them to
+              │                        │   the main AST. Deduplicates and
+              │                        │   detects circular imports.
+              └────────────┬───────────┘
+                           │
+                           │ merged AST
                            ▼
               ┌────────────────────────┐
               │   SemanticAnalyzer     │   Phase 3 ✅
@@ -183,6 +204,20 @@ The `findCaptures` method walks the lambda body to collect all `Identifier`
 references, subtracts parameter names and locally-declared variables, then
 checks each remaining name against the enclosing symbol table. Only non-function
 symbols are captured (functions are resolved directly by name at the LLVM level).
+
+### Module system: AST-level merge
+Imports are resolved by merging ASTs before any other phase runs. The
+`ModuleLoader` recursively parses each imported file, strips its import
+declarations, and prepends its `FunctionDecl` nodes into the importer's
+declaration list. By the time `SemanticAnalyzer` and `CodeGen` run, the
+program looks as if all functions were defined in a single file — no LLVM
+linker step required.
+
+Two mechanisms prevent common pitfalls:
+- **Deduplication**: a `loaded_` set ensures a module imported from multiple
+  files contributes its functions only once (avoiding duplicate definitions).
+- **Circular detection**: a `loading_` set tracks the in-progress import
+  chain; re-encountering a path in that set raises an error immediately.
 
 ### Runtime library
 Built-in operations (`print`, string ops, bounds checks) are implemented in

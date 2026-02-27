@@ -1,0 +1,5 @@
+import "b.tiny";
+
+fn func_a() -> int {
+    return func_b() + 1;
+}

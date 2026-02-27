@@ -1,0 +1,3 @@
+Error: circular import detected: 'a.tiny' (line 1)
+
+1 error(s)

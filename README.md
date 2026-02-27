@@ -49,6 +49,7 @@ print(apply(add5, 10));          // 15
 
 - **Type system**: `int`, `float`, `bool`, `string`, fixed-size arrays (`int[3]`), function types (`fn(int) -> int`)
 - **First-class functions**: Lambda expressions, closures with capture-by-value, higher-order functions
+- **Modules**: `import "file.tiny";` — multi-file programs with deduplication and circular-import detection
 - **Bindings**: Immutable (`let`) and mutable (`var`) with optional type inference
 - **Control flow**: `if`/`else`, `while`, range-based `for`
 - **Functions**: Named functions with typed parameters, return types, and recursion
@@ -75,6 +76,13 @@ The compiler follows a classical multi-pass architecture, with each phase cleanl
 │              │    grammar. This is where syntax becomes structure.
 └──────┬──────┘
        │ AST
+       ▼
+┌─────────────┐    ModuleLoader resolves import declarations by
+│  Module      │    recursively parsing imported files, extracting their
+│  Loader      │    functions, and prepending them to the main AST.
+│              │    Handles deduplication and circular import detection.
+└──────┬──────┘
+       │ merged AST
        ▼
 ┌─────────────┐    SemanticAnalyzer enforces type safety, resolves
 │  Semantic    │    symbols through a scoped symbol table, checks
@@ -129,8 +137,21 @@ The code generator maps Tiny constructs to LLVM IR using the C++ API:
 | `print(...)` | External `@tiny_print_*` calls |
 | `fn(x) { x + 1 }` | Internal function + `malloc` env + closure struct |
 | `f(args)` | Extract fn/env from closure, indirect call |
+| `import "math.tiny"` | AST-level merge — imported `FunctionDecl` nodes prepended before analysis |
 | `-O2` | LLVM `PassBuilder` optimization pipeline |
 | Source locations | `DIBuilder` — `DICompileUnit`, `DISubprogram`, `DILocalVariable`, `DILocation` |
+
+### Module System
+Multi-file programs are supported via `import "file.tiny";` at the top of any source file. The `ModuleLoader` resolves imports at the AST level before semantic analysis runs: it parses each imported file, recursively resolves its own imports, and prepends the resulting `FunctionDecl` nodes into the main program's declaration list. This means the semantic analyzer and code generator see a single, flat, fully-resolved program — no linker involvement required. The loader uses two sets to detect circular imports early (while the import chain is still being walked) and to deduplicate modules that are imported from multiple files.
+
+```tiny
+// math.tiny
+fn square(x: int) -> int { return x * x; }
+
+// main.tiny
+import "math.tiny";
+print(square(7));   // 49
+```
 
 ### Source-Level Debugging (LLVM DIBuilder)
 The compiler emits full DWARF debug information via LLVM's `DIBuilder` API, so compiled programs can be stepped through in GDB or LLDB at the `.tiny` source level — not just at the machine-code level. Every function gets a `DISubprogram`, every local variable a `DILocalVariable` with `insertDeclare`, every block a `DILexicalBlock`, and every statement a `DILocation`. The `CodeGen` constructor accepts the source file path and wires it into a `DICompileUnit` with `DW_LANG_C`. A critical subtlety: LLVM's `IRBuilder` retains the current debug location across `SetInsertPoint`, so the implementation explicitly clears it when entering each new function to prevent scope bleed.
@@ -233,7 +254,7 @@ This mirrors professional software development, where engineers routinely use to
 - [x] Optimization passes via LLVM PassManager (`-O1` / `-O2` / `-O3`)
 - [x] Closures and first-class functions (lambda expressions, capture analysis, heap-allocated environments)
 - [x] LLVM debug info — DWARF via `DIBuilder`, GDB/LLDB source-level stepping through `.tiny` files
-- [ ] End-to-end test suite execution
+- [x] Module system — `import "file.tiny";` with AST-level merging, deduplication, and circular import detection
 - [ ] Capture-by-reference for mutable closures
 - [ ] String operations (concatenation, length)
 

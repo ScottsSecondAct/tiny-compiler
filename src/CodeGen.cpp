@@ -322,6 +322,8 @@ bool CodeGen::generate(Program& program, const std::string& outputFile,
     return true;
 }
 
+std::any CodeGen::visit(ImportDecl& node) { return {}; }
+
 // ── Top-level ───────────────────────────────────────────────────────────────
 
 std::any CodeGen::visit(Program& node) {
@@ -347,10 +349,11 @@ std::any CodeGen::visit(Program& node) {
         }
     }
 
-    // Collect top-level statements (non-function declarations)
+    // Collect top-level statements (non-function, non-import declarations)
     std::vector<ASTNode*> topLevelStmts;
     for (auto& decl : node.declarations) {
-        if (!dynamic_cast<FunctionDecl*>(decl.get())) {
+        if (!dynamic_cast<FunctionDecl*>(decl.get()) &&
+            !dynamic_cast<ImportDecl*>(decl.get())) {
             topLevelStmts.push_back(decl.get());
         }
     }

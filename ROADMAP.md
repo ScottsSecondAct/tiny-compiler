@@ -18,6 +18,7 @@ ANTLR4 → C++ → LLVM IR pipeline without drowning in complexity.
 | `string` | `i8*` global constants via `CreateGlobalStringPtr` |
 | Lambdas / closures | Closure structs, `malloc`, indirect calls |
 | First-class functions | Function types, higher-order functions |
+| `import "file.tiny"` | AST-level module merging, multi-file programs |
 | Optimization | LLVM `PassBuilder` pipeline (`-O1` / `-O2` / `-O3`) |
 | Debug info | `DIBuilder` — `DICompileUnit`, `DISubprogram`, `DILocalVariable`, DWARF |
 
@@ -179,6 +180,47 @@ gdb fib
 
 **Key implementation detail:** `IRBuilder::SetCurrentDebugLocation` persists across `SetInsertPoint`. Without explicitly clearing it when entering a new function, the first instructions of the function inherit a stale `DILocation` from the previous function's scope, causing LLVM's module verifier to reject it with "!dbg attachment points at wrong subprogram". The fix is `builder_.SetCurrentDebugLocation(llvm::DebugLoc())` at function entry.
 
+### Phase 8 — Module System ✅
+
+**Milestone:** `import "file.tiny";` — multi-file programs with deduplication and circular import detection. ✅
+
+```tiny
+// math.tiny
+fn square(x: int) -> int { return x * x; }
+
+// main.tiny
+import "math.tiny";
+print(square(7));   // 49
+```
+
+**What was built:**
+
+**Grammar** — Added `IMPORT` keyword token and `importDecl` rule (`import STRING_LIT ';'`) as a new alternative in `declaration`.
+
+**AST** — Added `ImportDecl` node (holds the unquoted file path) and added `visit(ImportDecl&)` to `ASTVisitor`.
+
+**ASTBuilder** — `visitImportDecl` strips the surrounding quotes from the string literal and constructs an `ImportDecl` node.
+
+**ModuleLoader** (`include/tiny/ModuleLoader.h`, `src/ModuleLoader.cpp`) — Runs between AST construction and semantic analysis:
+- `resolve()` iterates top-level `ImportDecl` nodes and calls `loadFile()` for each
+- `loadFile()` parses the imported file with a fresh ANTLR + ASTBuilder stack, recursively resolves its own imports first (depth-first), then extracts its `FunctionDecl` nodes into the caller's output vector
+- A `loading_` set detects circular imports (path seen while still being walked)
+- A `loaded_` set skips files already fully processed (deduplication)
+- Only `FunctionDecl` nodes are accepted from imported modules — top-level statements produce an error
+- Resolved `FunctionDecl` nodes are prepended to the main `Program::declarations` list
+
+**SemanticAnalyzer / CodeGen / ASTPrinter** — Each got a no-op `visit(ImportDecl&)`; `CodeGen::visit(Program&)` skips `ImportDecl` nodes when collecting top-level statements.
+
+**main.cpp** — Added Phase 2.5 between AST build and semantic analysis.
+
+| Concept | Implementation |
+|---|---|
+| Multi-file parsing | Fresh `ANTLRInputStream` + `ASTBuilder` per imported file |
+| Import resolution order | Depth-first: each file's imports resolved before its own functions are extracted |
+| Deduplication | `std::set<std::string> loaded_` keyed by absolute path |
+| Circular detection | `std::set<std::string> loading_` checked before marking a file as in-progress |
+| Single-pass pipeline | Imported functions merged into main AST — no LLVM linker involved |
+
 ## What's Next
 
 ### Possible Extensions
@@ -187,6 +229,5 @@ gdb fib
 - **Structs** → `llvm::StructType`, field access via GEP
 - **Heap allocation & GC** → `malloc` / reference counting / tracing GC
 - **Pattern matching** → `switch` instruction
-- **Modules / imports** → multiple LLVM modules + linking
 - **String operations** → concatenation, length, slicing via runtime library
 - **Error recovery** → continue parsing after errors to report multiple issues

@@ -57,6 +57,8 @@ void SemanticAnalyzer::declareBuiltin(const std::string& name,
     symbols_.declare(sym);
 }
 
+std::any SemanticAnalyzer::visit(ImportDecl& node) { return {}; }
+
 // ── Top-level ───────────────────────────────────────────────────────────────
 
 std::any SemanticAnalyzer::visit(Program& node) {

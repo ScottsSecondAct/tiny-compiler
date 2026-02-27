@@ -1,0 +1,5 @@
+import "middle.tiny";
+
+print(add_two(10));
+print(add_two(0));
+print(increment(5));

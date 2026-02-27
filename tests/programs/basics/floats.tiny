@@ -1,0 +1,5 @@
+let a: float = 1.5;
+let b: float = 2.5;
+print(a + b);
+print(a * b);
+print(b - a);

@@ -66,7 +66,16 @@ std::any ASTBuilder::visitProgram(TinyParser::ProgramContext* ctx) {
 
 std::any ASTBuilder::visitDeclaration(TinyParser::DeclarationContext* ctx) {
     if (ctx->functionDecl()) return visitFunctionDecl(ctx->functionDecl());
+    if (ctx->importDecl()) return visitImportDecl(ctx->importDecl());
     return visitStatement(ctx->statement());
+}
+
+std::any ASTBuilder::visitImportDecl(TinyParser::ImportDeclContext* ctx) {
+    auto node = std::make_unique<ImportDecl>();
+    node->loc = getLoc(ctx);
+    std::string raw = ctx->STRING_LIT()->getText();
+    node->path = raw.substr(1, raw.size() - 2);   // strip surrounding quotes
+    return boxNode(std::move(node));
 }
 
 // ── Functions ───────────────────────────────────────────────────────────────

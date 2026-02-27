@@ -1,0 +1,2 @@
+import "a.tiny";
+print(func_a());

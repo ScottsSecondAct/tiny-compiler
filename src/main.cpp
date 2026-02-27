@@ -7,6 +7,7 @@
 #include "TinyParser.h"
 #include "tiny/ASTBuilder.h"
 #include "tiny/ASTPrinter.h"
+#include "tiny/ModuleLoader.h"
 #include "tiny/SemanticAnalyzer.h"
 #include "tiny/Diagnostics.h"
 #include "tiny/CodeGen.h"
@@ -90,8 +91,16 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // ── Phase 3: Semantic Analysis ──────────────────────────────────────
+    // ── Phase 2.5: Resolve Imports ──────────────────────────────────────
     tiny::Diagnostics diags;
+    tiny::ModuleLoader loader(diags);
+    loader.resolve(*ast, inputFile);
+    if (diags.hasErrors()) {
+        diags.dump(std::cerr);
+        return 1;
+    }
+
+    // ── Phase 3: Semantic Analysis ──────────────────────────────────────
     tiny::SemanticAnalyzer analyzer(diags);
     analyzer.analyze(*ast);
 

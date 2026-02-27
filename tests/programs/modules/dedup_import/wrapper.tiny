@@ -1,0 +1,5 @@
+import "math.tiny";
+
+fn triple_plus_one(x: int) -> int {
+    return triple(x) + 1;
+}

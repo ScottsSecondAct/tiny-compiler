@@ -24,6 +24,7 @@ struct ForStmt;
 struct ExprStmt;
 struct Block;
 struct FunctionDecl;
+struct ImportDecl;
 
 // Expressions
 struct IntLit;
@@ -171,6 +172,7 @@ public:
     virtual std::any visit(ExprStmt& node)     = 0;
     virtual std::any visit(Block& node)        = 0;
     virtual std::any visit(FunctionDecl& node) = 0;
+    virtual std::any visit(ImportDecl& node)   = 0;
 
     // Top-level
     virtual std::any visit(Program& node)      = 0;
@@ -375,6 +377,12 @@ struct FunctionDecl : ASTNodeBase<FunctionDecl> {
     std::vector<Param> params;
     TypeSpec returnType;               // Void if not specified
     std::unique_ptr<Block> body;
+};
+
+// ── Import Declaration ───────────────────────────────────────────────────────
+
+struct ImportDecl : ASTNodeBase<ImportDecl> {
+    std::string path;   // unquoted, e.g. "math.tiny"
 };
 
 // ── Program (root node) ─────────────────────────────────────────────────────

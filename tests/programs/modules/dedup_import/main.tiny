@@ -1,0 +1,5 @@
+import "math.tiny";
+import "wrapper.tiny";
+
+print(triple(4));
+print(triple_plus_one(4));

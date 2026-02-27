@@ -50,6 +50,7 @@ public:
     std::any visit(ExprStmt& node) override;
     std::any visit(Block& node) override;
     std::any visit(FunctionDecl& node) override;
+    std::any visit(ImportDecl& node) override;
 
     // ── Top-level ───────────────────────────────────────────────────────
     std::any visit(Program& node) override;

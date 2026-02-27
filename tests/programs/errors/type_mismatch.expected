@@ -1,1 +1,3 @@
-Error: type mismatch: cannot assign 'string' to 'int' (line 1)
+Error: type mismatch: cannot use 'string' where 'int' is expected (line 1)
+
+1 error(s)

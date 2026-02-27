@@ -254,6 +254,12 @@ std::any ASTPrinter::visit(FunctionDecl& node) {
     return {};
 }
 
+std::any ASTPrinter::visit(ImportDecl& node) {
+    printIndent();
+    out_ << "Import: \"" << node.path << "\"\n";
+    return {};
+}
+
 // ── Top-level ───────────────────────────────────────────────────────────────
 
 std::any ASTPrinter::visit(Program& node) {

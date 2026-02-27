@@ -1,0 +1,11 @@
+fn greet() {
+    print("hello");
+}
+
+fn double_greet() {
+    greet();
+    greet();
+}
+
+greet();
+double_greet();

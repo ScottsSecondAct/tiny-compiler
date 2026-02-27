@@ -28,7 +28,12 @@ program
 
 declaration
     : functionDecl
+    | importDecl
     | statement
+    ;
+
+importDecl
+    : IMPORT STRING_LIT ';'
     ;
 
 // ── Functions ───────────────────────────────────────────────────────────────
@@ -196,6 +201,7 @@ IN      : 'in';
 PRINT   : 'print';
 TRUE    : 'true';
 FALSE   : 'false';
+IMPORT  : 'import';
 INT_T   : 'int';
 FLOAT_T : 'float';
 BOOL_T  : 'bool';

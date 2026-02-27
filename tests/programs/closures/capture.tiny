@@ -1,0 +1,10 @@
+fn makeAdder(n: int) -> fn(int) -> int {
+    return fn(x: int) -> int { return x + n; };
+}
+
+let add5 = makeAdder(5);
+let add10 = makeAdder(10);
+
+print(add5(3));
+print(add10(3));
+print(add5(add10(1)));

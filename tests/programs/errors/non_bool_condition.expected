@@ -1,0 +1,3 @@
+Error: if condition must be 'bool', got 'int' (line 2)
+
+1 error(s)

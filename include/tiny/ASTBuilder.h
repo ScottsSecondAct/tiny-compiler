@@ -22,6 +22,7 @@ private:
     // ── Top-level ───────────────────────────────────────────────────────
     std::any visitProgram(TinyParser::ProgramContext* ctx) override;
     std::any visitDeclaration(TinyParser::DeclarationContext* ctx) override;
+    std::any visitImportDecl(TinyParser::ImportDeclContext* ctx) override;
 
     // ── Functions ───────────────────────────────────────────────────────
     std::any visitFunctionDecl(TinyParser::FunctionDeclContext* ctx) override;
