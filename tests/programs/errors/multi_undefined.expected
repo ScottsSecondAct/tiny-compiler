@@ -1,0 +1,5 @@
+Error: undefined variable 'a' (line 1)
+Error: undefined variable 'b' (line 2)
+Error: undefined variable 'c' (line 3)
+
+3 error(s)

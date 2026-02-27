@@ -1,5 +1,6 @@
 #include "tiny/ModuleLoader.h"
 #include "tiny/ASTBuilder.h"
+#include "tiny/ErrorListener.h"
 
 #include "antlr4-runtime.h"
 #include "TinyLexer.h"
@@ -48,12 +49,17 @@ bool ModuleLoader::loadFile(const std::string& absPath,
     // Parse the file
     antlr4::ANTLRInputStream input(inStream);
     TinyLexer lexer(&input);
+    TinyErrorListener errListener(diags_);
+    lexer.removeErrorListeners();
+    lexer.addErrorListener(&errListener);
+
     antlr4::CommonTokenStream tokens(&lexer);
     TinyParser parser(&tokens);
+    parser.removeErrorListeners();
+    parser.addErrorListener(&errListener);
     auto* tree = parser.program();
 
-    if (parser.getNumberOfSyntaxErrors() > 0) {
-        diags_.error(importLoc, "syntax error in module '" + basename + "'");
+    if (diags_.hasErrors()) {
         loading_.erase(absPath);
         return false;
     }

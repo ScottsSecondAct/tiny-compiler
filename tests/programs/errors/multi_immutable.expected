@@ -1,0 +1,4 @@
+Error: cannot assign to immutable variable 'x' (line 2)
+Error: cannot assign to immutable variable 'x' (line 3)
+
+2 error(s)

@@ -7,6 +7,7 @@
 #include "TinyParser.h"
 #include "tiny/ASTBuilder.h"
 #include "tiny/ASTPrinter.h"
+#include "tiny/ErrorListener.h"
 #include "tiny/ModuleLoader.h"
 #include "tiny/SemanticAnalyzer.h"
 #include "tiny/Diagnostics.h"
@@ -59,9 +60,15 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    tiny::Diagnostics diags;
+
     // ── Phase 1: Lex & Parse ────────────────────────────────────────────
     antlr4::ANTLRInputStream input(inStream);
     TinyLexer lexer(&input);
+    tiny::TinyErrorListener lexErrListener(diags);
+    lexer.removeErrorListeners();
+    lexer.addErrorListener(&lexErrListener);
+
     antlr4::CommonTokenStream tokens(&lexer);
 
     if (dumpTokens) {
@@ -73,11 +80,13 @@ int main(int argc, char* argv[]) {
     }
 
     TinyParser parser(&tokens);
+    tiny::TinyErrorListener parseErrListener(diags);
+    parser.removeErrorListeners();
+    parser.addErrorListener(&parseErrListener);
     auto* tree = parser.program();
 
-    if (parser.getNumberOfSyntaxErrors() > 0) {
-        std::cerr << "Parsing failed with "
-                  << parser.getNumberOfSyntaxErrors() << " error(s).\n";
+    if (diags.hasErrors()) {
+        diags.dump(std::cerr);
         return 1;
     }
 
@@ -92,7 +101,6 @@ int main(int argc, char* argv[]) {
     }
 
     // ── Phase 2.5: Resolve Imports ──────────────────────────────────────
-    tiny::Diagnostics diags;
     tiny::ModuleLoader loader(diags);
     loader.resolve(*ast, inputFile);
     if (diags.hasErrors()) {
