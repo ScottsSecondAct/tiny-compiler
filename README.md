@@ -1,4 +1,5 @@
 # Tiny Compiler
+![AI Assisted](https://img.shields.io/badge/AI%20Assisted-Claude-blue?logo=anthropic)
 
 A fully functional compiler for a custom programming language, built from scratch using **ANTLR4**, **C++17**, and **LLVM**. This project spans the entire compilation pipeline — lexical analysis, parsing, AST construction, semantic analysis, LLVM IR code generation, and native executable creation — demonstrating systems programming skills and deep understanding of language implementation.
 
@@ -180,41 +181,45 @@ End-to-end tests use `.tiny` / `.expected` file pairs — the test runner compil
 - C++17 compiler (GCC 9+ / Clang 10+)
 - ANTLR4 C++ runtime (4.13.2)
 - LLVM 15+ development libraries
-- Java runtime (for ANTLR4 tool)
+- Java runtime (for ANTLR4 tool — grammar regeneration only)
+- GoogleTest (for unit tests — optional, auto-detected)
 
 ### Ubuntu / Debian
 
 ```bash
-sudo apt install cmake g++ default-jre llvm-dev libffi-dev libedit-dev \
-    libncurses-dev zlib1g-dev libzstd-dev
+sudo apt install cmake ninja-build g++ clang default-jre \
+    llvm-dev libffi-dev libedit-dev libncurses-dev zlib1g-dev libzstd-dev
 ```
 
 ### Build & Run
 
 ```bash
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
+cmake -B build
+cmake --build build -j$(nproc)
 
 # Compile a Tiny program to LLVM IR
-./tinyc ../examples/hello.tiny -o output.ll
+./build/tinyc examples/hello.tiny -o output.ll
 
 # With optimizations
-./tinyc ../examples/hello.tiny -o output.ll -O2
+./build/tinyc examples/hello.tiny -o output.ll -O2
 
 # Link with runtime and run as native executable
-clang output.ll ../runtime/runtime.cpp -o hello -no-pie
+clang output.ll runtime/runtime.cpp -o hello -no-pie
 ./hello
 
 # Debug flags
-./tinyc ../examples/hello.tiny --dump-tokens   # Print token stream
-./tinyc ../examples/hello.tiny --dump-ast      # Print AST
+./build/tinyc examples/hello.tiny --dump-tokens   # Print token stream
+./build/tinyc examples/hello.tiny --dump-ast      # Print AST
 ```
 
 ### Run Tests
 
 ```bash
-python3 tests/programs/run_tests.py --compiler ./build/tinyc
+# Integration tests — compiles and executes .tiny programs, diffs against .expected output
+python3 tests/programs/run_tests.py --compiler ./build/tinyc --runtime runtime/runtime.cpp
+
+# Unit tests — GoogleTest suite covering lexer, parser, semantic analyzer, AST primitives
+./build/tests/tiny_tests
 ```
 
 ## Project Structure
@@ -238,7 +243,7 @@ This mirrors professional software development, where engineers routinely use to
 - **LLVM**: IR generation via the C++ API — basic blocks, alloca/load/store, GEP, function definitions, external linkage, closure structs, indirect calls, optimization passes, `DIBuilder` for DWARF debug info
 - **Build systems**: CMake with custom targets, external tool integration, multi-library linking
 - **Software architecture**: Clean separation of concerns, visitor pattern, test-driven development
-- **Tool proficiency**: ANTLR4, LLVM, GDB, VS Code + WSL, Git
+- **Tool proficiency**: ANTLR4, LLVM, GoogleTest, GDB/LLDB, CMake + Ninja, VS Code + WSL, Git
 
 ## Roadmap
 

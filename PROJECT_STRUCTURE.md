@@ -235,24 +235,27 @@ executes, and diffs. No framework needed for the integration layer.
 ## Build & Run
 
 ```bash
-# Build the compiler
-mkdir build && cd build
-cmake .. && make -j$(nproc)
+# Configure and build
+cmake -B build
+cmake --build build -j$(nproc)
 
 # Compile a Tiny program
-./tinyc ../examples/closures.tiny -o output.ll
+./build/tinyc examples/closures.tiny -o output.ll
 
 # With optimizations
-./tinyc ../examples/closures.tiny -o output.ll -O2
+./build/tinyc examples/closures.tiny -o output.ll -O2
 
 # Link with runtime and run
-clang output.ll ../runtime/runtime.cpp -o closures -no-pie
+clang output.ll runtime/runtime.cpp -o closures -no-pie
 ./closures
 
 # Debug flags
-./tinyc ../examples/closures.tiny --dump-ast
-./tinyc ../examples/closures.tiny --dump-tokens
+./build/tinyc examples/closures.tiny --dump-ast
+./build/tinyc examples/closures.tiny --dump-tokens
 
-# Test
-python3 ../tests/programs/run_tests.py --compiler ./tinyc
+# Integration tests — 40 .tiny/.expected pairs
+python3 tests/programs/run_tests.py --compiler ./build/tinyc --runtime runtime/runtime.cpp
+
+# Unit tests — 199 GoogleTest cases (lexer, parser, semantic, AST)
+./build/tests/tiny_tests
 ```

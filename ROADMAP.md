@@ -87,6 +87,7 @@ ANTLR4 → C++ → LLVM IR pipeline without drowning in complexity.
 ### Phase 5 — Link & Run ✅
 
 ```bash
+cmake -B build && cmake --build build -j$(nproc)
 ./build/tinyc examples/hello.tiny -o output.ll
 clang output.ll runtime/runtime.cpp -o hello -no-pie
 ./hello
@@ -100,6 +101,7 @@ clang output.ll runtime/runtime.cpp -o hello -no-pie
 
 ```bash
 ./build/tinyc examples/fibonacci.tiny -o fib.ll -O2
+clang fib.ll runtime/runtime.cpp -o fib -no-pie && ./fib
 ```
 
 **What was built:**
@@ -148,7 +150,7 @@ print(add5(3));  // 8
 ```bash
 ./build/tinyc examples/fibonacci.tiny -o fib.ll
 clang fib.ll runtime/runtime.cpp -o fib -no-pie
-gdb fib
+gdb ./fib
 # (gdb) b fib_rec  →  Breakpoint 1 at fibonacci.tiny:3
 # (gdb) run        →  fib_rec (n=10) at fibonacci.tiny:4
 # (gdb) list       →  shows .tiny source
