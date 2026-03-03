@@ -53,6 +53,7 @@ Makefile
 .DS_Store
 Thumbs.db
 desktop.ini
+*:Zone.Identifier
 
 # Core dumps
 core
