@@ -1,5 +1,5 @@
 # Tiny Compiler
-![AI Assisted](https://img.shields.io/badge/AI%20Assisted-Claude-blue?logo=anthropic)
+[![Open Source](https://img.shields.io/badge/Open%20Source-Yes-green.svg)](https://github.com/ScottsSecondAct/some) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 A fully functional compiler for a custom programming language, built from scratch using **ANTLR4**, **C++17**, and **LLVM**. This project spans the entire compilation pipeline — lexical analysis, parsing, AST construction, semantic analysis, LLVM IR code generation, and native executable creation — demonstrating systems programming skills and deep understanding of language implementation.
 
